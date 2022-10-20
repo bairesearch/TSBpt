@@ -27,7 +27,7 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 #replaced ... with transformers.
 #replaced . with transformers.
 
-sharedLayerWeights = True	#orig: False
+sharedLayerWeights = False	#orig: False
 
 integratedPythonModule = False	#custom/modeling_roberta_sharedLayerWeights.py code has been integrated into transformers python module
 

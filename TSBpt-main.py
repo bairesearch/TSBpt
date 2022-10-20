@@ -35,35 +35,39 @@ useSmallDataloaderDebug = True	#used during rapid testing only (FUTURE: assign e
 statePreprocessDataset = False	#only required once
 stateTrainTokenizer = False	#only required once
 stateTrainDataset = True
+stateTestDataset = False	#requires reserveValidationSet
 
-startEpoch = 0	#start epoch of training (if continuing a training regime set accordingly >0)	#if startEpoch=0 will recreate model, if startEpoch>0 will load existing model
-numberOfEpochs = 1	#default: 10	#number of epochs to train (for production typically train 1 epoch at a time)
+trainStartEpoch = 0	#start epoch of training (if continuing a training regime set accordingly >0)	#if trainStartEpoch=0 and trainStartDataFile=0 will recreate model, if trainStartEpoch>0 or trainStartDataFile>0 will load existing model
+trainNumberOfEpochs = 1	#default: 10	#number of epochs to train (for production typically train x epochs at a time)
+trainStartDataFile = 0	#start data file to train (if continuing a training regime set accordingly >0)	#if trainStartEpoch=0 and trainStartDataFile=0 will recreate model, if trainStartEpoch>0 or trainStartDataFile>0 will load existing model
+trainNumberOfDataFiles = 50	#default: -1 (all)	#number of data files to train (for production typically train x dataFiles at a time)	#< numberOfDataFiles (30424) * trainSplitFraction
+testNumberOfDataFiles = 10	#default: -1 (all)
+
+reserveValidationSet = True	#reserves a fraction of the data for validation
+trainSplitFraction = 0.9	#90% train data, 10% test data
 
 batch_size = 8  #default: 16	#8 and 16 train at approx same rate (16 uses more GPU ram)	#depends on GPU RAM
 learningRate = 1e-4
 fractionOfMaskedTokens = 0.15
 
-#dependent vars:
-stateTestDataset = False
-if(stateTrainDataset):
-	stateTestDataset = True
-
 if(useSmallDataloaderDebug):
 	useSmallDataloaderDebug1 = False	#limit number of data files trained
-	useSmallDataloaderDebug2 = True	#limit number of data files trained
-	useSmallDataloaderDebug3 = False	#limit number of data files trained
+	useSmallDataloaderDebug2 = False	#limit number of data files trained
+	useSmallDataloaderDebug3 = True	#limit number of data files trained
 	if(useSmallDataloaderDebug1):	
-		loaderNumberOfDataFiles = 1	#mandatory
+		trainNumberOfDataFiles = 1	#mandatory
 	elif(useSmallDataloaderDebug2):
-		loaderNumberOfDataFiles = 50	#max ~50	#depends on system RAM (mem=50*35MBfile=~2GB, numberOfLoaderIterations=30424/50=600)
-	elif(useSmallDataloaderDebug3):
-		loaderNumberOfDataFiles = 1000	#1000	#unlimited (<= numberOfDataFiles*trainSplitFraction)
+		if(trainNumberOfDataFiles > 50):
+			trainNumberOfDataFiles = 50 #max ~50	#depends on system RAM (mem=50*35MBfile=~2GB, numberOfLoaderIterations=30424/50=600)
 
-trainSplitFraction = 0.9	#90% train data, 10% test data
+numberOfSamplesPerDataFile = 10000
+numberOfSamplesPerDataFileLast = 423
+dataFileLastSampleIndex = 30423
 
 #storage location vars (requires 4TB harddrive);
 downloadCacheFolder = '/media/user/datasets/cache'
 dataFolder = '/media/user/datasets/data'
+modelFolderName = 'model'
 
 modelSaveNumberOfBatches = 1000	#resave model after x training batches
 
@@ -131,16 +135,14 @@ def trainTokenizer(paths):
 
 	tokenizer.train(files=paths[:trainTokenizerNumberOfFilesToUse], vocab_size=30_522, min_frequency=2, special_tokens=['<s>', '<pad>', '</s>', '<unk>', '<mask>'])
 
-	os.mkdir('./oscarberto')
+	os.mkdir(modelFolderName)
 
-	tokenizer.save_model('oscarberto')
-	
-	tokenizer = loadTokenizer()	#CHECKTHIS
-	
+	tokenizer.save_model(modelFolderName)
+		
 	return tokenizer
 
 def loadTokenizer():	
-	tokenizer = RobertaTokenizer.from_pretrained('oscarberto', max_len=transformerMaxNumTokens)
+	tokenizer = RobertaTokenizer.from_pretrained(modelFolderName, max_len=transformerMaxNumTokens)
 	return tokenizer
 
 def addMaskTokens(input_ids):
@@ -151,53 +153,73 @@ def addMaskTokens(input_ids):
 		input_ids[i, selection] = customMaskTokenID
 	return input_ids
 
+def dataFileIndexListContainsLastFile(dataFileIndexList, paths):
+	containsDataFileLastSample = False
+	for dataFileIndex in dataFileIndexList:
+		path = paths[dataFileIndex]
+		if(str(dataFileLastSampleIndex) in path):
+			containsDataFileLastSample = True	
+	return containsDataFileLastSample
+	
 class DatasetHDD(torch.utils.data.Dataset):
 	def __init__(self, dataFileIndexList, paths):
 		self.dataFileIndexList = dataFileIndexList
 		self.paths = paths
+		self.encodings = None
+		self.containsDataFileLastSample = dataFileIndexListContainsLastFile(dataFileIndexList, paths)
 
 	def __len__(self):
-		return len(self.dataFileIndexList)
+		numberOfSamples = len(self.dataFileIndexList)*numberOfSamplesPerDataFile
+		if(self.containsDataFileLastSample):
+			numberOfSamples = numberOfSamples-numberOfSamplesPerDataFile + numberOfSamplesPerDataFileLast
+		return numberOfSamples
 
 	def __getitem__(self, i):
-		dataFileIndex = self.dataFileIndexList[i]
-		path = self.paths[dataFileIndex]
-		with open(path, 'r', encoding='utf-8') as fp:
-			lines = fp.read().split('\n')
-			
-		sample = tokenizer(lines, max_length=transformerMaxNumTokens, padding='max_length', truncation=True, return_tensors='pt')
-
-		labels = sample.input_ids
-		mask = sample.attention_mask
-		input_ids = (sample.input_ids).detach().clone() 
-		input_ids = addMaskTokens(input_ids)
-
-		encodings = {'input_ids': input_ids, 'attention_mask': mask, 'labels': labels}
-
-		return {key: tensor[i] for key, tensor in encodings.items()}
-
-def createDataLoader(tokenizer, paths, splitTrain=True):
-	numberOfDataFiles = len(paths)
-	if(useSmallDataloaderDebug3):
-		if(splitTrain):
-			pathIndexMin = 0
-			pathIndexMax = loaderNumberOfDataFiles
-		else:
-			pathIndexMin = int(numberOfDataFiles*trainSplitFraction)	#or numberOfDataFiles
-			pathIndexMax = pathIndexMin+(loaderNumberOfDataFiles*trainSplitFraction)
-	else:
-		if(splitTrain):
-			pathIndexMin = 0
-			pathIndexMax = trainSplitFraction
-		else:
-			pathIndexMin = int(numberOfDataFiles*trainSplitFraction)
-			pathIndexMax = -1
 	
-	dataFileIndexList = list(range(pathIndexMin, pathIndexMax))
+		loadNextDataFile = False
+		sampleIndex = i // numberOfSamplesPerDataFile
+		itemIndexInSample = i % numberOfSamplesPerDataFile
+		if(itemIndexInSample == 0):
+			loadNextDataFile = True	
+		dataFileIndex = self.dataFileIndexList[sampleIndex]
+					
+		if(loadNextDataFile):
+			
+			path = self.paths[dataFileIndex]
 
+			with open(path, 'r', encoding='utf-8') as fp:
+				lines = fp.read().split('\n')
+
+			#sample = tokenizer(lines, max_length=transformerMaxNumTokens, padding='max_length', truncation=True)
+			#labels = torch.tensor([x for x in sample['input_ids']])
+			#mask = torch.tensor([x for x in sample['attention_mask']])
+			#input_ids = labels.detach().clone() 
+			#input_ids = addMaskTokens(input_ids)
+			
+			sample = tokenizer(lines, max_length=transformerMaxNumTokens, padding='max_length', truncation=True, return_tensors='pt')
+			input_ids = []
+			mask = []
+			labels = []
+			labels.append(sample.input_ids)
+			mask.append(sample.attention_mask)
+			sample_input_ids = (sample.input_ids).detach().clone()
+			input_ids.append(addMaskTokens(sample_input_ids))
+			input_ids = torch.cat(input_ids)
+			mask = torch.cat(mask)
+			labels = torch.cat(labels)
+			
+			self.encodings = {'input_ids': input_ids, 'attention_mask': mask, 'labels': labels}
+		
+		return {key: tensor[itemIndexInSample] for key, tensor in self.encodings.items()}
+
+def createDataLoader(tokenizer, paths, pathIndexMin, pathIndexMax):
+
+	dataFileIndexList = list(range(pathIndexMin, pathIndexMax))
+	print("dataFileIndexList = ", dataFileIndexList)
+	
 	dataset = DatasetHDD(dataFileIndexList, paths)
 
-	loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+	loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)	#shuffle not supported by DatasetHDD
 
 	return loader
 	
@@ -220,7 +242,6 @@ def createDataLoaderDev1(tokenizer):
 	
 	labels = torch.tensor([x for x in batch['input_ids']])
 	mask = torch.tensor([x for x in batch['attention_mask']])
-
 	input_ids = labels.detach().clone()
 	input_ids = addMaskTokens(input_ids)
 	
@@ -237,8 +258,8 @@ def createDataLoaderDev2(tokenizer, paths, loaderIndex):
 	mask = []
 	labels = []
 	
-	pathIndexMin = loaderIndex*loaderNumberOfDataFiles
-	pathIndexMax = loaderIndex*loaderNumberOfDataFiles + loaderNumberOfDataFiles
+	pathIndexMin = loaderIndex*trainNumberOfDataFiles
+	pathIndexMax = loaderIndex*trainNumberOfDataFiles + trainNumberOfDataFiles
 	
 	for path in tqdm(paths[pathIndexMin:pathIndexMax]):	
 		with open(path, 'r', encoding='utf-8') as fp:
@@ -248,14 +269,11 @@ def createDataLoaderDev2(tokenizer, paths, loaderIndex):
 		labels.append(sample.input_ids)
 		mask.append(sample.attention_mask)
 		sample_input_ids = (sample.input_ids).detach().clone() 
-		#sample_input_ids = labels[-1].detach().clone()
 		input_ids.append(addMaskTokens(sample_input_ids))
 			
 	input_ids = torch.cat(input_ids)
 	mask = torch.cat(mask)
 	labels = torch.cat(labels)
-
-	input_ids.shape
 
 	encodings = {'input_ids': input_ids, 'attention_mask': mask, 'labels': labels}
 
@@ -266,10 +284,16 @@ def createDataLoaderDev2(tokenizer, paths, loaderIndex):
 	return loader
 
 
+def continueTrainingModel():
+	continueTrain = False
+	if((trainStartEpoch > 0) or (trainStartDataFile > 0)):
+		continueTrain = True	#if trainStartEpoch=0 and trainStartDataFile=0 will recreate model, if trainStartEpoch>0 or trainStartDataFile>0 will load existing model
+	return continueTrain	
+
 def trainDataset(tokenizer, paths):
 
-	if(startEpoch > 0):
-		model = RobertaForMaskedLM.from_pretrained('./oscarberto', local_files_only=True)
+	if(continueTrainingModel()):
+		model = RobertaForMaskedLM.from_pretrained(modelFolderName, local_files_only=True)
 	else:
 		config = RobertaConfig(
 			vocab_size=30_522,  #sync with tokenizer vocab_size
@@ -288,16 +312,26 @@ def trainDataset(tokenizer, paths):
 	optim = AdamW(model.parameters(), lr=learningRate)
 	
 	numberOfDataFiles = len(paths)
-	if(useSmallDataloaderDebug1):
-		numberOfLoaderIterations = 1
-		loader = createDataLoaderDev1(tokenizer)
-	elif(useSmallDataloaderDebug2):
-		loaderIndex = 0
-		loader = createDataLoaderDev2(tokenizer, paths, loaderIndex)
+	if(useSmallDataloaderDebug):
+		if(useSmallDataloaderDebug1):
+			numberOfLoaderIterations = 1
+			loader = createDataLoaderDev1(tokenizer)
+		elif(useSmallDataloaderDebug2):
+			loaderIndex = 0
+			loader = createDataLoaderDev2(tokenizer, paths, loaderIndex)
+		elif(useSmallDataloaderDebug3):
+			pathIndexMin = 0
+			pathIndexMax = trainNumberOfDataFiles
+			loader = createDataLoader(tokenizer, paths, pathIndexMin, pathIndexMax)
 	else:
-		loader = createDataLoader(tokenizer, paths, True)
-			
-	for epoch in range(startEpoch, startEpoch+numberOfEpochs):
+		pathIndexMin = trainStartDataFile
+		if(reserveValidationSet and trainNumberOfDataFiles==-1):	
+			pathIndexMax = int(numberOfDataFiles*trainSplitFraction)
+		else:
+			pathIndexMax = pathIndexMin+trainNumberOfDataFiles
+		loader = createDataLoader(tokenizer, paths, pathIndexMin, pathIndexMax)
+	
+	for epoch in range(trainStartEpoch, trainStartEpoch+trainNumberOfEpochs):
 		loop = tqdm(loader, leave=True)
 		for batchIndex, batch in enumerate(loop):
 			optim.zero_grad()
@@ -318,12 +352,12 @@ def trainDataset(tokenizer, paths):
 			loop.set_postfix(batchIndex=batchIndex, loss=loss.item(), accuracy=accuracy)
 		
 			if(batchIndex % modelSaveNumberOfBatches == 0):
-				model.save_pretrained('./oscarberto')
-		model.save_pretrained('./oscarberto')
+				model.save_pretrained(modelFolderName)
+		model.save_pretrained(modelFolderName)
 
 def testDataset(tokenizer, paths):
 
-	model = RobertaForMaskedLM.from_pretrained('./oscarberto', local_files_only=True)
+	model = RobertaForMaskedLM.from_pretrained(modelFolderName, local_files_only=True)
 
 	device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 	model.to(device)
@@ -331,22 +365,18 @@ def testDataset(tokenizer, paths):
 	model.eval()
 	
 	numberOfDataFiles = len(paths)
-	if(useSmallDataloaderDebug1):
-		numberOfLoaderIterations = 1
-		loader = createDataLoaderDev1(tokenizer)
-	elif(useSmallDataloaderDebug2):
-		loaderIndex = 0
-		loader = createDataLoaderDev2(tokenizer, paths, loaderIndex)
-	else:
-		loader = createDataLoader(tokenizer, paths, False)
-			
-	for epoch in range(startEpoch, startEpoch+numberOfEpochs):
+
+	pathIndexMin = int(numberOfDataFiles*trainSplitFraction)
+	pathIndexMax = testNumberOfDataFiles		
+	loader = createDataLoader(tokenizer, paths, pathIndexMin, pathIndexMax)
+
+	for epoch in range(trainStartEpoch, trainStartEpoch+trainNumberOfEpochs):
 		loop = tqdm(loader, leave=True)
 		for batchIndex, batch in enumerate(loop):
 			input_ids = batch['input_ids'].to(device)
 			attention_mask = batch['attention_mask'].to(device)
 			labels = batch['labels'].to(device)
-			
+						
 			outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
 			
 			accuracy = getAccuracy(tokenizer, input_ids, attention_mask, labels, outputs)
@@ -383,7 +413,7 @@ def getAccuracy(tokenizer, input_ids, attention_mask, labels, outputs):
 	return accuracy
 	
 def testWordCompletion():
-	fill = pipeline('fill-mask', model='oscarberto', tokenizer='oscarberto')
+	fill = pipeline('fill-mask', model=modelFolderName, tokenizer=modelFolderName)
 
 	fill(f'Hi {fill.tokenizer.mask_token} are you?')
 	fill(f'good day, {fill.tokenizer.mask_token} are you?')
@@ -396,15 +426,13 @@ if(__name__ == '__main__'):
 		preprocessDataset(dataset)
 	paths = [str(x) for x in Path(dataFolder).glob('**/*.txt')]
 	if(stateTrainTokenizer):
-		if(startEpoch > 0):
-			tokenizer = loadTokenizer()
-		else:
-			tokenizer = trainTokenizer(paths)
-	else:
+		trainTokenizer(paths)
+	if(stateTrainDataset or stateTestDataset):
 		tokenizer = loadTokenizer()
 	if(stateTrainDataset):
 		trainDataset(tokenizer, paths)
-	if(stateTestDataset):
 		testWordCompletion()
+	if(stateTestDataset):
+		testDataset(tokenizer, paths)
 
 
