@@ -30,7 +30,7 @@ See RobertaForMaskedLM tutorial; https://towardsdatascience.com/how-to-train-a-b
 #user config vars:
 useSmallDatasetDebug = False
 useSmallTokenizerTrainNumberOfFilesDebug = True	#used during rapid testing only (FUTURE: assign est 80 hours to perform full tokenisation train)
-useSmallDataloaderDebug = True	#used during rapid testing only (FUTURE: assign est 1 year to perform full dataset train)
+useSmallDataloaderDebug = False	#used during rapid testing only (FUTURE: assign est 1 year to perform full dataset train)
 
 statePreprocessDataset = False	#only required once
 stateTrainTokenizer = False	#only required once
@@ -158,7 +158,7 @@ def dataFileIndexListContainsLastFile(dataFileIndexList, paths):
 	for dataFileIndex in dataFileIndexList:
 		path = paths[dataFileIndex]
 		if(str(dataFileLastSampleIndex) in path):
-			containsDataFileLastSample = True	
+			containsDataFileLastSample = True
 	return containsDataFileLastSample
 	
 class DatasetHDD(torch.utils.data.Dataset):
@@ -325,7 +325,7 @@ def trainDataset(tokenizer, paths):
 			loader = createDataLoader(tokenizer, paths, pathIndexMin, pathIndexMax)
 	else:
 		pathIndexMin = trainStartDataFile
-		if(reserveValidationSet and trainNumberOfDataFiles==-1):	
+		if(reserveValidationSet and trainNumberOfDataFiles==-1):
 			pathIndexMax = int(numberOfDataFiles*trainSplitFraction)
 		else:
 			pathIndexMax = pathIndexMin+trainNumberOfDataFiles
@@ -404,9 +404,13 @@ def getAccuracy(tokenizer, input_ids, attention_mask, labels, outputs):
 		comparisonMasked = torch.multiply(comparison, maskTokenIndex)
 		accuracy = (torch.sum(comparisonMasked)/torch.sum(maskTokenIndex)).cpu().numpy() 
 	else:
-		comparison = (tokenLogitsTopIndex == labels).float()	#labels broadcasted to [batchSize, transformerMaxNumTokens, accuracyTopN]
-		comparisonMasked = torch.multiply(comparison, maskTokenIndex)	#maskTokenIndex broadcasted to [batchSize, transformerMaxNumTokens, accuracyTopN]
-		accuracy = (torch.sum(comparisonMasked)/torch.sum(maskTokenIndex)).cpu().numpy() 	
+		labelsExpanded = torch.unsqueeze(labels, dim=2)
+		labelsExpanded = labelsExpanded.expand(-1, -1, tokenLogitsTopIndex.shape[2])	#labels broadcasted to [batchSize, transformerMaxNumTokens, accuracyTopN]
+		comparison = (tokenLogitsTopIndex == labelsExpanded).float()
+		maskTokenIndexExpanded = torch.unsqueeze(maskTokenIndex, dim=2)
+		maskTokenIndexExpanded = maskTokenIndexExpanded.expand(-1, -1, tokenLogitsTopIndex.shape[2])	#maskTokenIndex broadcasted to [batchSize, transformerMaxNumTokens, accuracyTopN]
+		comparisonMasked = torch.multiply(comparison, maskTokenIndexExpanded)	#maskTokenIndex broadcasted to [batchSize, transformerMaxNumTokens, accuracyTopN]
+		accuracy = (torch.sum(comparisonMasked)/torch.sum(maskTokenIndex)).cpu().numpy() 	#or torch.sum(comparisonMasked)/(torch.sum(maskTokenIndexExpanded)/accuracyTopN)
 	
 	#accuracy2 = (torch.mean(comparisonMasked)).cpu().numpy()
 	
