@@ -13,6 +13,7 @@ conda install python=3.7	[DOESNTWORK: conda install python (python-3.10.6) becau
 pip install datasets
 pip install transfomers==4.23.1
 pip install torch
+pip install torchsummary
 
 # Usage:
 source activate transformersenv
@@ -27,14 +28,27 @@ See RobertaForMaskedLM tutorial; https://towardsdatascience.com/how-to-train-a-b
 
 """
 
+from modeling_roberta_sharedLayerWeights import sharedLayerWeights
+
 #user config vars:
 useSmallDatasetDebug = False
 useSmallTokenizerTrainNumberOfFilesDebug = True	#used during rapid testing only (FUTURE: assign est 80 hours to perform full tokenisation train)
+useSingleHiddenLayerDebug = False
 
 statePreprocessDataset = False	#only required once
 stateTrainTokenizer = False	#only required once
 stateTrainDataset = False
 stateTestDataset = True	#requires reserveValidationSet
+
+if(sharedLayerWeights):
+	from modeling_roberta_sharedLayerWeights import sharedLayerWeightsOutput
+	sharedLayerWeightsNormaliseNumParameter = True	#optional	#if use sharedLayerWeights normalise/equalise num of parameters with respect to !sharedLayerWeights
+	if(sharedLayerWeightsNormaliseNumParameter):
+		sharedLayerWeightsNormaliseNumParameterIntermediate = True	#normalise intermediateSize parameters also
+		sharedLayerWeightsNormaliseNumParameterDebug = False	#normalise hiddenLayerSize/numberOfAttentionHeads with respect to orig numberOfHiddenLayers instead of number of parameters (model size)
+else:
+	sharedLayerWeightsNormaliseNumParameter = False	#mandatory
+	
 
 trainStartEpoch = 0	#start epoch of training (if continuing a training regime set accordingly >0)	#if trainStartEpoch=0 and trainStartDataFile=0 will recreate model, if trainStartEpoch>0 or trainStartDataFile>0 will load existing model
 trainNumberOfEpochs = 1	#default: 10	#number of epochs to train (for production typically train x epochs at a time)
@@ -42,11 +56,67 @@ trainStartDataFile = 0	#start data file to train (if continuing a training regim
 trainNumberOfDataFiles = 100	#50	#default: -1 (all)	#number of data files to train (for production typically train x dataFiles at a time)	#< numberOfDataFiles (30424) * trainSplitFraction
 testNumberOfDataFiles = 10	#default: -1 (all)
 
+if(useSingleHiddenLayerDebug):
+	numberOfHiddenLayers = 1
+else:
+	numberOfHiddenLayers = 6	#default: 6
+
+vocabularySize = 30522	#default: 30522
+hiddenLayerSize = 768	#default: 768
+numberOfAttentionHeads = 12	#default: 12
+intermediateSize = 3072	#default: 3072
+
+if(sharedLayerWeights):
+	if(sharedLayerWeightsNormaliseNumParameter):
+		if(sharedLayerWeightsNormaliseNumParameterDebug):
+			#model size = 1.7GB
+			hiddenLayerSizeMultiplier = numberOfHiddenLayers
+		else:
+			if(sharedLayerWeightsOutput):
+				if(sharedLayerWeightsNormaliseNumParameterIntermediate):
+					#model size = 249MB
+					hiddenLayerSizeMultiplier = (7/4)	#(5/3) - ~230MB	
+				else:
+					#model size = ~255MB
+					hiddenLayerSizeMultiplier = 2
+			else:
+				if(sharedLayerWeightsNormaliseNumParameterIntermediate):
+					#model size = 273MB
+					hiddenLayerSizeMultiplier = (4/3)
+				else:
+					#model size = ~255MB
+					hiddenLayerSizeMultiplier = 1.5
+		hiddenLayerSize = round(hiddenLayerSize*hiddenLayerSizeMultiplier)
+		numberOfAttentionHeads = round(numberOfAttentionHeads*hiddenLayerSizeMultiplier)	#or: round(numberOfAttentionHeads)
+		if(sharedLayerWeightsNormaliseNumParameterIntermediate):
+			intermediateSize = round(intermediateSize*hiddenLayerSizeMultiplier)	
+		print("hiddenLayerSize = ", hiddenLayerSize)
+		print("numberOfAttentionHeads = ", numberOfAttentionHeads)
+		print("intermediateSize = ", intermediateSize)
+	else:
+		if(sharedLayerWeightsOutput):
+			#model size = ~120MB
+			pass
+		else:
+			#model size = 176.7MB
+			pass
+else:
+	#model size = 255.6MB
+	pass
+		
 reserveValidationSet = True	#reserves a fraction of the data for validation
 trainSplitFraction = 0.9	#90% train data, 10% test data
 
-batch_size = 8  #default: 16	#8 and 16 train at approx same rate (16 uses more GPU ram)	#depends on GPU RAM
-learningRate = 1e-4
+if(sharedLayerWeightsNormaliseNumParameter):
+	if(sharedLayerWeightsNormaliseNumParameterDebug):
+		batchSize = 1
+		learningRate = 1.25e5 #1e-4/8=0.0000125 	
+	else:
+		batchSize = 8	#sharedLayerWeightsNormaliseNumParameter uses ~16x more GPU RAM than !sharedLayerWeightsNormaliseNumParameter, and ~2x more GPU RAM than !sharedLayerWeights
+		learningRate = 1e-4
+else:
+	batchSize = 8  #default: 16	#8 and 16 train at approx same rate (16 uses more GPU ram)	#depends on GPU RAM	#with 12GB GPU RAM, batchSize max = 16
+	learningRate = 1e-4
 fractionOfMaskedTokens = 0.15
 
 numberOfSamplesPerDataFile = 10000
@@ -62,7 +132,6 @@ modelSaveNumberOfBatches = 1000	#resave model after x training batches
 
 accuracyTopN = 1	#default: 1	#>= 1	#calculates batch accuracy based on top n dictionary predictions
 
-from modeling_roberta_sharedLayerWeights import sharedLayerWeights
 from datasets import load_dataset
 from tqdm.auto import tqdm
 from pathlib import Path
@@ -77,6 +146,7 @@ else:
 	from transformers import RobertaForMaskedLM
 from transformers import AdamW
 from transformers import pipeline
+from torchsummary import summary
 
 #torch.set_printoptions(threshold=10_000)
 torch.set_printoptions(profile="full")
@@ -121,7 +191,7 @@ def trainTokenizer(paths):
 
 	tokenizer = ByteLevelBPETokenizer()
 
-	tokenizer.train(files=paths[:trainTokenizerNumberOfFilesToUse], vocab_size=30_522, min_frequency=2, special_tokens=['<s>', '<pad>', '</s>', '<unk>', '<mask>'])
+	tokenizer.train(files=paths[:trainTokenizerNumberOfFilesToUse], vocab_size=vocabularySize, min_frequency=2, special_tokens=['<s>', '<pad>', '</s>', '<unk>', '<mask>'])
 
 	os.mkdir(modelFolderName)
 
@@ -208,7 +278,7 @@ def createDataLoader(tokenizer, paths, pathIndexMin, pathIndexMax):
 	
 	dataset = DatasetHDD(dataFileIndexList, paths)
 
-	loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)	#shuffle not supported by DatasetHDD
+	loader = torch.utils.data.DataLoader(dataset, batch_size=batchSize, shuffle=False)	#shuffle not supported by DatasetHDD
 
 	return loader
 
@@ -226,15 +296,24 @@ def trainDataset(tokenizer, paths):
 	else:
 		print("creating new model")
 		config = RobertaConfig(
-			vocab_size=30_522,  #sync with tokenizer vocab_size
-			max_position_embeddings=514,
-			hidden_size=768,
-			num_attention_heads=12,
-			num_hidden_layers=6,
+			vocab_size=vocabularySize,  #sync with tokenizer vocab_size
+			max_position_embeddings=(transformerMaxNumTokens+2),
+			hidden_size=hiddenLayerSize,
+			num_attention_heads=numberOfAttentionHeads,
+			num_hidden_layers=numberOfHiddenLayers,
+			intermediate_size=intermediateSize,
 			type_vocab_size=1
 		)
 		model = RobertaForMaskedLM(config)
 
+		#inputShape = (batchSize, transformerMaxNumTokens)
+		#summary(model, inputShape)
+		#print(sum(p.numel() for p in model.parameters()))
+	#inputShape = (batchSize, transformerMaxNumTokens)
+	#print("inputShape = ", inputShape)
+	#summary(model, input_size=inputShape) 	#, dtypes=['torch.IntTensor']
+	#print(model)
+	
 	device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 	model.to(device)
 

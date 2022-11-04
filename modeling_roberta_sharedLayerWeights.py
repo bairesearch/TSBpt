@@ -28,6 +28,8 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 #replaced . with transformers.
 
 sharedLayerWeights = True	#orig: False
+if(sharedLayerWeights):
+	sharedLayerWeightsOutput = True	#share RobertaOutputSharedLayerOutput/RobertaSelfOutputSharedLayerOutput parameters also
 
 integratedPythonModule = False	#custom/modeling_roberta_sharedLayerWeights.py code has been integrated into transformers python module
 
@@ -93,6 +95,21 @@ ROBERTA_PRETRAINED_MODEL_ARCHIVE_LIST = [
 	# See all RoBERTa models at https://huggingface.co/models?filter=roberta
 ]
 
+
+class RobertaSharedLayerModules:
+	def __init__(self, config):
+		#precalculate these parameters locally (temp);
+		num_attention_heads = config.num_attention_heads
+		attention_head_size = int(config.hidden_size / config.num_attention_heads)
+		all_head_size = num_attention_heads * attention_head_size
+		
+		self.robertaSelfAttentionSharedLayerQuery = nn.Linear(config.hidden_size, all_head_size)
+		self.robertaSelfAttentionSharedLayerKey = nn.Linear(config.hidden_size, all_head_size)
+		self.robertaSelfAttentionSharedLayerValue = nn.Linear(config.hidden_size, all_head_size)
+		self.robertaIntermediateSharedLayerDense = nn.Linear(config.hidden_size, config.intermediate_size)
+		if(sharedLayerWeightsOutput):
+			self.RobertaOutputSharedLayerOutput = nn.Linear(config.intermediate_size, config.hidden_size)
+			self.RobertaSelfOutputSharedLayerOutput = nn.Linear(config.hidden_size, config.hidden_size) 
 
 class RobertaEmbeddings(nn.Module):
 	"""
@@ -183,7 +200,7 @@ class RobertaEmbeddings(nn.Module):
 
 # Copied from transformers.models.bert.modeling_bert.BertSelfAttention with Bert->Roberta
 class RobertaSelfAttention(nn.Module):
-	def __init__(self, config, RobertaSelfAttentionSharedLayerQuery=None, RobertaSelfAttentionSharedLayerKey=None, RobertaSelfAttentionSharedLayerValue=None, position_embedding_type=None):
+	def __init__(self, config, robertaSharedLayerModules=None, position_embedding_type=None):
 		super().__init__()
 		if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
 			raise ValueError(
@@ -196,9 +213,9 @@ class RobertaSelfAttention(nn.Module):
 		self.all_head_size = self.num_attention_heads * self.attention_head_size
 
 		if(sharedLayerWeights):
-			self.query = RobertaSelfAttentionSharedLayerQuery
-			self.key = RobertaSelfAttentionSharedLayerKey
-			self.value = RobertaSelfAttentionSharedLayerValue
+			self.query = robertaSharedLayerModules.robertaSelfAttentionSharedLayerQuery
+			self.key = robertaSharedLayerModules.robertaSelfAttentionSharedLayerKey
+			self.value = robertaSharedLayerModules.robertaSelfAttentionSharedLayerValue
 		else:
 			self.query = nn.Linear(config.hidden_size, self.all_head_size)
 			self.key = nn.Linear(config.hidden_size, self.all_head_size)
@@ -316,9 +333,12 @@ class RobertaSelfAttention(nn.Module):
 
 # Copied from transformers.models.bert.modeling_bert.BertSelfOutput
 class RobertaSelfOutput(nn.Module):
-	def __init__(self, config):
+	def __init__(self, config, robertaSharedLayerModules=None):
 		super().__init__()
-		self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+		if(sharedLayerWeightsOutput):
+			self.dense = robertaSharedLayerModules.RobertaSelfOutputSharedLayerOutput
+		else:
+			self.dense = nn.Linear(config.hidden_size, config.hidden_size)
 		self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 		self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -331,10 +351,10 @@ class RobertaSelfOutput(nn.Module):
 
 # Copied from transformers.models.bert.modeling_bert.BertAttention with Bert->Roberta
 class RobertaAttention(nn.Module):
-	def __init__(self, config, RobertaSelfAttentionSharedLayerQuery=None, RobertaSelfAttentionSharedLayerKey=None, RobertaSelfAttentionSharedLayerValue=None, position_embedding_type=None):
+	def __init__(self, config, robertaSharedLayerModules=None, position_embedding_type=None):
 		super().__init__()
-		self.self = RobertaSelfAttention(config, RobertaSelfAttentionSharedLayerQuery, RobertaSelfAttentionSharedLayerKey, RobertaSelfAttentionSharedLayerValue, position_embedding_type=position_embedding_type)
-		self.output = RobertaSelfOutput(config)
+		self.self = RobertaSelfAttention(config, robertaSharedLayerModules, position_embedding_type=position_embedding_type)
+		self.output = RobertaSelfOutput(config, robertaSharedLayerModules)
 		self.pruned_heads = set()
 
 	def prune_heads(self, heads):
@@ -381,10 +401,10 @@ class RobertaAttention(nn.Module):
 
 # Copied from transformers.models.bert.modeling_bert.BertIntermediate
 class RobertaIntermediate(nn.Module):
-	def __init__(self, config, RobertaIntermediateSharedLayerDense=None):
+	def __init__(self, config, robertaSharedLayerModules=None):
 		super().__init__()
 		if(sharedLayerWeights):
-			self.dense = RobertaIntermediateSharedLayerDense
+			self.dense = robertaSharedLayerModules.robertaIntermediateSharedLayerDense
 		else:
 			self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
 		if isinstance(config.hidden_act, str):
@@ -400,9 +420,12 @@ class RobertaIntermediate(nn.Module):
 
 # Copied from transformers.models.bert.modeling_bert.BertOutput
 class RobertaOutput(nn.Module):
-	def __init__(self, config):
+	def __init__(self, config, robertaSharedLayerModules=None):
 		super().__init__()
-		self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
+		if(sharedLayerWeightsOutput):
+			self.dense = robertaSharedLayerModules.RobertaOutputSharedLayerOutput
+		else:
+			self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
 		self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 		self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -415,19 +438,19 @@ class RobertaOutput(nn.Module):
 
 # Copied from transformers.models.bert.modeling_bert.BertLayer with Bert->Roberta
 class RobertaLayer(nn.Module):
-	def __init__(self, config, RobertaSelfAttentionSharedLayerQuery=None, RobertaSelfAttentionSharedLayerKey=None, RobertaSelfAttentionSharedLayerValue=None, RobertaIntermediateSharedLayerDense=None):
+	def __init__(self, config, robertaSharedLayerModules=None):
 		super().__init__()
 		self.chunk_size_feed_forward = config.chunk_size_feed_forward
 		self.seq_len_dim = 1
-		self.attention = RobertaAttention(config, RobertaSelfAttentionSharedLayerQuery, RobertaSelfAttentionSharedLayerKey, RobertaSelfAttentionSharedLayerValue)
+		self.attention = RobertaAttention(config, robertaSharedLayerModules)
 		self.is_decoder = config.is_decoder
 		self.add_cross_attention = config.add_cross_attention
 		if self.add_cross_attention:
 			if not self.is_decoder:
 				raise ValueError(f"{self} should be used as a decoder model if cross attention is added")
-			self.crossattention = RobertaAttention(config, RobertaSelfAttentionSharedLayerQuery, RobertaSelfAttentionSharedLayerKey, RobertaSelfAttentionSharedLayerValue, position_embedding_type="absolute")
-		self.intermediate = RobertaIntermediate(config, RobertaIntermediateSharedLayerDense)
-		self.output = RobertaOutput(config)
+			self.crossattention = RobertaAttention(config, robertaSharedLayerModules, position_embedding_type="absolute")
+		self.intermediate = RobertaIntermediate(config, robertaSharedLayerModules)
+		self.output = RobertaOutput(config, robertaSharedLayerModules)
 
 	def forward(
 		self,
@@ -506,17 +529,9 @@ class RobertaEncoder(nn.Module):
 		super().__init__()
 		self.config = config
 		if(sharedLayerWeights):
-			#precalculate these parameters locally (temp);
-			num_attention_heads = config.num_attention_heads
-			attention_head_size = int(config.hidden_size / config.num_attention_heads)
-			all_head_size = num_attention_heads * attention_head_size
+			robertaSharedLayerModules = RobertaSharedLayerModules(config)
 			
-			RobertaSelfAttentionSharedLayerQuery = nn.Linear(config.hidden_size, all_head_size)
-			RobertaSelfAttentionSharedLayerKey = nn.Linear(config.hidden_size, all_head_size)
-			RobertaSelfAttentionSharedLayerValue = nn.Linear(config.hidden_size, all_head_size)
-			RobertaIntermediateSharedLayerDense = nn.Linear(config.hidden_size, config.intermediate_size)
-			
-			self.layer = nn.ModuleList([RobertaLayer(config, RobertaSelfAttentionSharedLayerQuery, RobertaSelfAttentionSharedLayerKey, RobertaSelfAttentionSharedLayerValue, RobertaIntermediateSharedLayerDense) for _ in range(config.num_hidden_layers)])
+			self.layer = nn.ModuleList([RobertaLayer(config, robertaSharedLayerModules) for _ in range(config.num_hidden_layers)])
 		else:
 			self.layer = nn.ModuleList([RobertaLayer(config) for _ in range(config.num_hidden_layers)])			
 		self.gradient_checkpointing = False
