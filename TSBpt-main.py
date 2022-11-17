@@ -21,104 +21,122 @@ python TSBpt-main.py
 
 # Description:
 TSBpt main - Transformer Syntactic Bias (TSB): trains a RoBERTa transformer with a number of syntactic inductive biases:
-- sharedLayerWeights
+- recursiveLayers
 	- Roberta number of layers = 6 supports approximately 2^6 words per sentence (contextual window = 512 tokens)
 
-See RobertaForMaskedLM tutorial; https://towardsdatascience.com/how-to-train-a-bert-model-from-scratch-72cfce554fc6
+See RobertaForMaskedLM tutorial; 
+	https://huggingface.co/blog/how-to-train
+	https://towardsdatascience.com/how-to-train-a-bert-model-from-scratch-72cfce554fc6
 
 """
 
-from modeling_roberta_sharedLayerWeights import sharedLayerWeights
+from modeling_roberta_recursiveLayers import recursiveLayers
 
 #user config vars:
+
 useSmallDatasetDebug = False
-useSmallTokenizerTrainNumberOfFilesDebug = True	#used during rapid testing only (FUTURE: assign est 80 hours to perform full tokenisation train)
 useSingleHiddenLayerDebug = False
+usePretainedModelDebug = False	#executes stateTestDataset only
+useSmallBatchSizeDebug = False
+
+useSmallTokenizerTrainNumberOfFiles = True	#used during rapid testing only (FUTURE: assign est 80 hours to perform full tokenisation train)
 
 statePreprocessDataset = False	#only required once
 stateTrainTokenizer = False	#only required once
 stateTrainDataset = False
 stateTestDataset = True	#requires reserveValidationSet
 
-if(sharedLayerWeights):
-	from modeling_roberta_sharedLayerWeights import sharedLayerWeightsOutput
-	sharedLayerWeightsNormaliseNumParameter = True	#optional	#if use sharedLayerWeights normalise/equalise num of parameters with respect to !sharedLayerWeights
-	if(sharedLayerWeightsNormaliseNumParameter):
-		sharedLayerWeightsNormaliseNumParameterIntermediate = True	#normalise intermediateSize parameters also
-		sharedLayerWeightsNormaliseNumParameterDebug = False	#normalise hiddenLayerSize/numberOfAttentionHeads with respect to orig numberOfHiddenLayers instead of number of parameters (model size)
+if(recursiveLayers):
+	from modeling_roberta_recursiveLayers import sharedLayerWeights
+	from modeling_roberta_recursiveLayers import sharedLayerWeightsOutput
+	recursiveLayersNormaliseNumParameters = False	#default: True	#optional	#if use recursiveLayers normalise/equalise num of parameters with respect to !recursiveLayers
+	if(recursiveLayersNormaliseNumParameters):
+		recursiveLayersNormaliseNumParametersIntermediate = True	#normalise intermediateSize parameters also
+		recursiveLayersNormaliseNumParametersDebug = False	#normalise hiddenLayerSize/numberOfAttentionHeads with respect to orig numberOfHiddenLayers instead of number of parameters (model size)
 else:
-	sharedLayerWeightsNormaliseNumParameter = False	#mandatory
+	recursiveLayersNormaliseNumParameters = False	#mandatory
 	
 
 trainStartEpoch = 0	#start epoch of training (if continuing a training regime set accordingly >0)	#if trainStartEpoch=0 and trainStartDataFile=0 will recreate model, if trainStartEpoch>0 or trainStartDataFile>0 will load existing model
 trainNumberOfEpochs = 1	#default: 10	#number of epochs to train (for production typically train x epochs at a time)
-trainStartDataFile = 0	#start data file to train (if continuing a training regime set accordingly >0)	#if trainStartEpoch=0 and trainStartDataFile=0 will recreate model, if trainStartEpoch>0 or trainStartDataFile>0 will load existing model
-trainNumberOfDataFiles = 100	#50	#default: -1 (all)	#number of data files to train (for production typically train x dataFiles at a time)	#< numberOfDataFiles (30424) * trainSplitFraction
+trainStartDataFile = 0	#default: 0	#start data file to train (if continuing a training regime set accordingly >0)	#if trainStartEpoch=0 and trainStartDataFile=0 will recreate model, if trainStartEpoch>0 or trainStartDataFile>0 will load existing model
+trainNumberOfDataFiles = 100	#default: -1 (all)	#number of data files to train (for production typically train x dataFiles at a time)	#< numberOfDataFiles (30424) * trainSplitFraction
 testNumberOfDataFiles = 10	#default: -1 (all)
 
-if(useSingleHiddenLayerDebug):
-	numberOfHiddenLayers = 1
-else:
-	numberOfHiddenLayers = 6	#default: 6
+if(not usePretainedModelDebug):
 
-vocabularySize = 30522	#default: 30522
-hiddenLayerSize = 768	#default: 768
-numberOfAttentionHeads = 12	#default: 12
-intermediateSize = 3072	#default: 3072
-
-if(sharedLayerWeights):
-	if(sharedLayerWeightsNormaliseNumParameter):
-		if(sharedLayerWeightsNormaliseNumParameterDebug):
-			#model size = 1.7GB
-			hiddenLayerSizeMultiplier = numberOfHiddenLayers
-		else:
-			if(sharedLayerWeightsOutput):
-				if(sharedLayerWeightsNormaliseNumParameterIntermediate):
-					#model size = 249MB
-					hiddenLayerSizeMultiplier = (7/4)	#(5/3) - ~230MB	
-				else:
-					#model size = ~255MB
-					hiddenLayerSizeMultiplier = 2
-			else:
-				if(sharedLayerWeightsNormaliseNumParameterIntermediate):
-					#model size = 273MB
-					hiddenLayerSizeMultiplier = (4/3)
-				else:
-					#model size = ~255MB
-					hiddenLayerSizeMultiplier = 1.5
-		hiddenLayerSize = round(hiddenLayerSize*hiddenLayerSizeMultiplier)
-		numberOfAttentionHeads = round(numberOfAttentionHeads*hiddenLayerSizeMultiplier)	#or: round(numberOfAttentionHeads)
-		if(sharedLayerWeightsNormaliseNumParameterIntermediate):
-			intermediateSize = round(intermediateSize*hiddenLayerSizeMultiplier)	
-		print("hiddenLayerSize = ", hiddenLayerSize)
-		print("numberOfAttentionHeads = ", numberOfAttentionHeads)
-		print("intermediateSize = ", intermediateSize)
+	if(useSingleHiddenLayerDebug):
+		numberOfHiddenLayers = 1
 	else:
-		if(sharedLayerWeightsOutput):
-			#model size = ~120MB
-			pass
+		numberOfHiddenLayers = 6	#default: 6
+
+	vocabularySize = 30522	#default: 30522
+	hiddenLayerSize = 768	#default: 768
+	numberOfAttentionHeads = 12	#default: 12
+	intermediateSize = 3072	#default: 3072
+
+	if(recursiveLayers):
+		#same model size irrespective of useSingleHiddenLayerDebug
+		if(recursiveLayersNormaliseNumParameters):
+			if(recursiveLayersNormaliseNumParametersDebug):
+				hiddenLayerSizeMultiplier = numberOfHiddenLayers	#model size = 1.7GB
+			else:
+				if(sharedLayerWeights):
+					if(sharedLayerWeightsOutput):
+						if(recursiveLayersNormaliseNumParametersIntermediate):
+							hiddenLayerSizeMultiplier = (7/4)	#model size = 249MB	
+							#hiddenLayerSizeMultiplier = (5/3)	#~230MB	
+						else:
+							hiddenLayerSizeMultiplier = 2	#model size = ~255MB
+					else:
+						if(recursiveLayersNormaliseNumParametersIntermediate):
+							hiddenLayerSizeMultiplier = (4/3)	#model size = 273MB
+						else:
+							hiddenLayerSizeMultiplier = 1.5	#model size = ~255MB
+				else:
+					hiddenLayerSizeMultiplier = (7/4)	#model size = ~250MB	#optimisation failure observed
+					#hiddenLayerSizeMultiplier = (11/6)	#model size = ~265MB	#optimisation failure observed
+					#hiddenLayerSizeMultiplier = 2.0	#model size = ~280MB	#optimisation failure observed
+					
+			hiddenLayerSize = round(hiddenLayerSize*hiddenLayerSizeMultiplier)
+			numberOfAttentionHeads = round(numberOfAttentionHeads*hiddenLayerSizeMultiplier)	#or: round(numberOfAttentionHeads)
+			if(recursiveLayersNormaliseNumParametersIntermediate):
+				intermediateSize = round(intermediateSize*hiddenLayerSizeMultiplier)
+			print("hiddenLayerSize = ", hiddenLayerSize)
+			print("numberOfAttentionHeads = ", numberOfAttentionHeads)
+			print("intermediateSize = ", intermediateSize)
 		else:
-			#model size = 176.7MB
-			pass
-else:
-	#model size = 255.6MB
-	pass
+			if(sharedLayerWeights):
+				if(sharedLayerWeightsOutput):
+					pass	#model size = ~120MB
+				else:
+					pass	#model size = 176.7MB
+			else:
+				pass	#model size = 120.4MB
+	else:
+		if(useSingleHiddenLayerDebug):
+			pass	#model size = 120.4MB
+		else:
+			pass	#model size = 255.6MB
 		
 reserveValidationSet = True	#reserves a fraction of the data for validation
 trainSplitFraction = 0.9	#90% train data, 10% test data
 
-if(sharedLayerWeightsNormaliseNumParameter):
-	if(sharedLayerWeightsNormaliseNumParameterDebug):
+if(recursiveLayersNormaliseNumParameters):
+	if(recursiveLayersNormaliseNumParametersDebug):
 		batchSize = 1
-		learningRate = 1.25e5 #1e-4/8=0.0000125 	
+		learningRate = 1.25e5 #1e-4/8=0.0000125
 	else:
-		batchSize = 8	#sharedLayerWeightsNormaliseNumParameter uses ~16x more GPU RAM than !sharedLayerWeightsNormaliseNumParameter, and ~2x more GPU RAM than !sharedLayerWeights
+		batchSize = 8	#recursiveLayersNormaliseNumParameters uses ~16x more GPU RAM than !recursiveLayersNormaliseNumParameters, and ~2x more GPU RAM than !recursiveLayers
 		learningRate = 1e-4
 else:
 	batchSize = 8  #default: 16	#8 and 16 train at approx same rate (16 uses more GPU ram)	#depends on GPU RAM	#with 12GB GPU RAM, batchSize max = 16
 	learningRate = 1e-4
 fractionOfMaskedTokens = 0.15
 
+if(useSmallBatchSizeDebug):
+	batchSize = 1	#use small batch size to enable simultaneous execution (GPU ram limited) 
+	
 numberOfSamplesPerDataFile = 10000
 numberOfSamplesPerDataFileLast = 423
 dataFileLastSampleIndex = 30423
@@ -140,13 +158,14 @@ import os
 from transformers import RobertaTokenizer
 import torch
 from transformers import RobertaConfig
-if(sharedLayerWeights):
-	from modeling_roberta_sharedLayerWeights import RobertaForMaskedLM
+if(recursiveLayers):
+	from modeling_roberta_recursiveLayers import RobertaForMaskedLM
 else:
 	from transformers import RobertaForMaskedLM
 from transformers import AdamW
 from transformers import pipeline
 from torchsummary import summary
+import math 
 
 #torch.set_printoptions(threshold=10_000)
 torch.set_printoptions(profile="full")
@@ -167,24 +186,24 @@ def downloadDataset():
 	return dataset
 
 def preprocessDataset(dataset):
-	text_data = []
-	file_count = 0
-
+	textData = []
+	fileCount = 0
 	for sample in tqdm(dataset['train']):
 		sample = sample['text'].replace('\n', '')
-		text_data.append(sample)
-		if len(text_data) == 10_000:
-			fileName = dataFolder + "/text_" + str(file_count) + ".txt"
-			with open(fileName, 'w', encoding='utf-8') as fp:
-				fp.write('\n'.join(text_data))
-			text_data = []
-			file_count += 1
-	fileName = dataFolder + "/text_" + str(file_count) + ".txt"
+		textData.append(sample)
+		if(len(textData) == numberOfSamplesPerDataFile):
+			writeDataFile(fileCount, textData)
+			textData = []
+			fileCount += 1
+	writeDataFile(fileCount, textData)	#remaining data file will be < numberOfSamplesPerDataFile
+	
+def writeDataFile(fileCount, textData):
+	fileName = dataFolder + "/text_" + str(fileCount) + ".txt"
 	with open(fileName, 'w', encoding='utf-8') as fp:
-		fp.write('\n'.join(text_data))
+		fp.write('\n'.join(textData))
 
 def trainTokenizer(paths):
-	if(useSmallTokenizerTrainNumberOfFilesDebug):
+	if(useSmallTokenizerTrainNumberOfFiles):
 		trainTokenizerNumberOfFilesToUse = 1000	#default 1000	#100: 15 min, 1000: 3.75 hours
 	else:
 		trainTokenizerNumberOfFilesToUse = len(paths)
@@ -355,7 +374,10 @@ def trainDataset(tokenizer, paths):
 
 def testDataset(tokenizer, paths):
 
-	model = RobertaForMaskedLM.from_pretrained(modelFolderName, local_files_only=True)
+	if(usePretainedModelDebug):
+		model = RobertaForMaskedLM.from_pretrained("roberta-base")
+	else:
+		model = RobertaForMaskedLM.from_pretrained(modelFolderName, local_files_only=True)
 
 	device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 	model.to(device)
@@ -387,9 +409,10 @@ def testDataset(tokenizer, paths):
 			loss = outputs.loss
 			loss = loss.detach().cpu().numpy()
 			
-			averageAccuracy = averageAccuracy + accuracy
-			averageLoss = averageLoss + loss
-			batchCount = batchCount + 1
+			if(not math.isnan(accuracy)):	#required for usePretainedModelDebug only
+				averageAccuracy = averageAccuracy + accuracy
+				averageLoss = averageLoss + loss
+				batchCount = batchCount + 1
 
 			loop.set_description(f'Epoch {epoch}')
 			loop.set_postfix(batchIndex=batchIndex, loss=loss, accuracy=accuracy)
@@ -435,13 +458,17 @@ if(__name__ == '__main__'):
 		dataset = downloadDataset()
 		preprocessDataset(dataset)
 	paths = [str(x) for x in Path(dataFolder).glob('**/*.txt')]
-	if(stateTrainTokenizer):
-		trainTokenizer(paths)
-	if(stateTrainDataset or stateTestDataset):
-		tokenizer = loadTokenizer()
-	if(stateTrainDataset):
-		trainDataset(tokenizer, paths)
-	if(stateTestDataset):
+	if(usePretainedModelDebug):
+		tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
 		testDataset(tokenizer, paths)
+	else:
+		if(stateTrainTokenizer):
+			trainTokenizer(paths)
+		if(stateTrainDataset or stateTestDataset):
+			tokenizer = loadTokenizer()
+		if(stateTrainDataset):
+			trainDataset(tokenizer, paths)
+		if(stateTestDataset):
+			testDataset(tokenizer, paths)
 
 

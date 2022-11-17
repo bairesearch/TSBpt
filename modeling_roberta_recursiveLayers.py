@@ -24,16 +24,20 @@ import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
-#replaced ... with transformers.
-#replaced . with transformers.
+recursiveLayers = True
 
-sharedLayerWeights = True	#orig: False
-if(sharedLayerWeights):
-	sharedLayerWeightsOutput = True	#share RobertaOutputSharedLayerOutput/RobertaSelfOutputSharedLayerOutput parameters also
+sharedLayerWeights = False
+sharedLayerWeightsOutput = False
+if(recursiveLayers):
+	sharedLayerWeights = False	#orig recursiveLayers implementation
+	if(sharedLayerWeights):
+		sharedLayerWeightsOutput = True	#share RobertaOutputSharedLayerOutput/RobertaSelfOutputSharedLayerOutput parameters also
 
 integratedPythonModule = False	#custom/modeling_roberta_sharedLayerWeights.py code has been integrated into transformers python module
 
 if(not integratedPythonModule):
+	#replaced ... with transformers.
+	#replaced . with transformers.models.roberta.
 	from transformers.activations import ACT2FN, gelu
 	from transformers.modeling_outputs import (
 		BaseModelOutputWithPastAndCrossAttentions,
@@ -528,10 +532,13 @@ class RobertaEncoder(nn.Module):
 	def __init__(self, config):
 		super().__init__()
 		self.config = config
-		if(sharedLayerWeights):
-			robertaSharedLayerModules = RobertaSharedLayerModules(config)
-			
-			self.layer = nn.ModuleList([RobertaLayer(config, robertaSharedLayerModules) for _ in range(config.num_hidden_layers)])
+		if(recursiveLayers):
+			if(sharedLayerWeights):
+				robertaSharedLayerModules = RobertaSharedLayerModules(config)
+				self.layer = nn.ModuleList([RobertaLayer(config, robertaSharedLayerModules) for _ in range(config.num_hidden_layers)])
+			else:
+				self.recursiveLayer = RobertaLayer(config)
+				self.layer = nn.ModuleList([self.recursiveLayer for _ in range(config.num_hidden_layers)]) 
 		else:
 			self.layer = nn.ModuleList([RobertaLayer(config) for _ in range(config.num_hidden_layers)])			
 		self.gradient_checkpointing = False
