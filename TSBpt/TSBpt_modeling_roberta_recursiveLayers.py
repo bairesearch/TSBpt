@@ -1,3 +1,27 @@
+"""TSBpt_modeling_roberta_recursiveLayers.py
+
+# Author:
+Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
+Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+Richard Bruce Baxter - Copyright (c) 2022 Baxter AI (baxterai.com)
+
+# License:
+MIT License
+
+# Installation:
+see TSBpt_main.py
+
+# Usage:
+see TSBpt_main.py
+
+# Description:
+TSBpt modeling roberta recursiveLayers
+
+derived from modeling_roberta.py
+(https://github.com/huggingface/transformers/blob/v4.23-release/src/transformers/models/roberta/modeling_roberta.py)
+
+"""
+
 # coding=utf-8
 # Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
 # Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
