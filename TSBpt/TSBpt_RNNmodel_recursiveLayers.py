@@ -61,8 +61,9 @@ class RNNrecursiveLayersModel(nn.Module):
 		
 		inputsEmbeddings = self.word_embeddings(labels)
 		if(config.applyIOconversionLayers):
-			inputsEmbeddingsReshaped = pt.reshape(inputsEmbeddings, (config.N*config.L, config.embeddingLayerSize))
-			inputState = self.inputLayer(inputsEmbeddingsReshaped)
+			inputState = pt.reshape(inputsEmbeddings, (config.N*config.L, config.embeddingLayerSize))
+			inputState = self.inputLayer(inputState)
+			inputState = self.activationFunction(inputState)
 			inputState = pt.reshape(inputState, (config.N, config.L, config.hiddenLayerSize))
 		else:
 			inputState = inputsEmbeddings
@@ -80,8 +81,9 @@ class RNNrecursiveLayersModel(nn.Module):
 		
 		if(config.applyIOconversionLayers):
 			outputState = pt.reshape(outputState, (config.N*config.L, config.hiddenLayerSize))
-			y = self.outputLayer(outputState)
-			y = pt.reshape(y, (config.N, config.L, config.embeddingLayerSize))
+			outputState = self.outputLayer(outputState)
+			outputState = self.activationFunction(outputState)
+			y = pt.reshape(outputState, (config.N, config.L, config.embeddingLayerSize))
 		else:
 			y = outputState
 		yHat = inputsEmbeddings
