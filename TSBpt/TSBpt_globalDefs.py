@@ -18,9 +18,9 @@ TSBpt globalDefs
 """
 
 #recursive algorithm selection:
-useAlgorithmTransformer = True
+useAlgorithmTransformer = False
 useAlgorithmRNN = False
-useAlgorithmSANI = False
+useAlgorithmSANI = True
 
 userName = 'user'	#default: user
 
@@ -54,7 +54,7 @@ elif(useAlgorithmRNN):
 	batchSize = 8  
 	learningRate = 1e-4
 elif(useAlgorithmSANI):
-	batchSize = 8  
+	batchSize = 2	#8  #depends on GPU memory
 	learningRate = 1e-4
 
 if(useSmallBatchSizeDebug):

@@ -27,7 +27,7 @@ import TSBpt_data
 from TSBpt_SANImodel_recursiveLayers import recursiveLayers, SANIrecursiveLayersModel, SANIrecursiveLayersConfig
 
 embeddingLayerSize = 768
-hiddenLayerSize = 768	#65536	#2^16 - large hidden size is required for recursive SANI as parameters are shared across a) sequence length and b) number of layers
+hiddenLayerSize = 256	#1024	#depends on GPU memory	#2^16 = 65536 - large hidden size is required for recursive SANI as parameters are shared across a) sequence length and b) number of layers
 #numberOfHiddenLayers = 6
 
 modelPathName = modelFolderName + '/modelSANI.pt'

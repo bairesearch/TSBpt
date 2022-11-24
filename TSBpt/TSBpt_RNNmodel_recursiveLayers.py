@@ -49,7 +49,7 @@ class RNNrecursiveLayersModel(nn.Module):
 		super().__init__()
 		self.config = config
 		self.word_embeddings = nn.Embedding(config.vocab_size, config.embeddingLayerSize, padding_idx=config.pad_token_id)
-		self.rnn = nn.RNN(input_size=config.hiddenLayerSize, hidden_size=config.hiddenLayerSize, num_layers=config.num_layers, batch_first=True)
+		self.rnnLayer = nn.RNN(input_size=config.hiddenLayerSize, hidden_size=config.hiddenLayerSize, num_layers=config.num_layers, batch_first=True)
 		if(config.applyIOconversionLayers):
 			self.inputLayer = nn.Linear(config.embeddingLayerSize, config.hiddenLayerSize)
 			self.outputLayer = nn.Linear(config.hiddenLayerSize, config.embeddingLayerSize)
@@ -72,10 +72,10 @@ class RNNrecursiveLayersModel(nn.Module):
 		hiddenState = inputState
 		if(recursiveLayers):
 			for layerIndex in range(config.numberOfRecursiveLayers):
-				hiddenState, hn = self.rnn(hiddenState, hn)
+				hiddenState, hn = self.rnnLayer(hiddenState, hn)
 				#print("hiddenState = ", hiddenState)
 		else:
-			hiddenState, hn = rnn(hiddenState, hn)
+			hiddenState, hn = rnnLayer(hiddenState, hn)
 		outputState = hiddenState
 		
 		if(config.applyIOconversionLayers):
