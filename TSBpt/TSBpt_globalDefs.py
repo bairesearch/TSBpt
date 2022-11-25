@@ -54,7 +54,7 @@ elif(useAlgorithmRNN):
 	batchSize = 8  
 	learningRate = 1e-4
 elif(useAlgorithmSANI):
-	batchSize = 2	#8  #depends on GPU memory
+	batchSize = 8	#2	#depends on GPU memory
 	learningRate = 1e-4
 
 if(useSmallBatchSizeDebug):

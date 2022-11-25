@@ -27,14 +27,15 @@ if(skipLayers):
 	skipLayersDominance = 0.9	#degree of sequentialInputState preservation (direct recursive/loop connection) as signal is propagated to higher layers
 	skipLayersNorm = True
 retainHiddenEmbeddingStructure = True	#experimental	#do not mix hidden embeddings (for every unit/neuron in hidden layer, calculate new value based on current and previous value)
+parallelProcessLayers = True
 
 class SANIrecursiveLayersConfig():
 	def __init__(self, vocabularySize, batchSize, sequenceLength, hiddenLayerSize, embeddingLayerSize):
 		self.vocab_size = vocabularySize
 		self.num_layers = sequenceLength
-		self.N = batchSize
-		self.L = sequenceLength
-		#self.D = bidirectional	#default: 1 #2 if bidirectional=True otherwise 1
+		self.batchSize = batchSize
+		self.sequenceLength = sequenceLength
+		#self.bidirectional = bidirectional	#default: 1 #2 if bidirectional=True otherwise 1
 		self.hiddenLayerSize = hiddenLayerSize
 		self.embeddingLayerSize = embeddingLayerSize	#input token embedding size (equivalent to roberta hidden_size)
 		self.pad_token_id = 1	#default=1 #https://huggingface.co/transformers/v2.11.0/model_doc/roberta.html 
@@ -47,7 +48,11 @@ class SANIrecursiveLayersModel(nn.Module):
 		super().__init__()
 		self.config = config
 		self.word_embeddings = nn.Embedding(config.vocab_size, config.embeddingLayerSize, padding_idx=config.pad_token_id)
-		self.outputStates = [None]*config.num_layers
+		if(not parallelProcessLayers):
+			self.outputStatesList = [None]*config.num_layers
+			self.hiddenStateLastList = [None]*config.num_layers	#last activated hidden state of each layer
+			for layerIndex in range(config.num_layers):
+				self.hiddenStateLastList[layerIndex] = pt.zeros([config.batchSize, config.hiddenLayerSize])
 		if(recursiveLayers):
 			self.saniLayer = self.generateSANIlayer(config.hiddenLayerSize)
 		else:
@@ -59,9 +64,6 @@ class SANIrecursiveLayersModel(nn.Module):
 			self.inputLayer = nn.Linear(config.embeddingLayerSize, config.hiddenLayerSize)
 			self.outputLayer = nn.Linear(config.hiddenLayerSize, config.embeddingLayerSize)
 		self.lossFunction = CrossEntropyLoss()	#CHECKTHIS
-		self.hiddenStateLast = [None]*config.num_layers	#last activated hidden state of each layer
-		for layerIndex in range(config.num_layers):
-			self.hiddenStateLast[layerIndex] = pt.zeros([config.N, config.hiddenLayerSize])
 		self.activationFunction = pt.nn.ReLU()
 		if(skipLayers):
 			if(skipLayersNorm):
@@ -85,61 +87,77 @@ class SANIrecursiveLayersModel(nn.Module):
 		
 		inputsEmbeddings = self.word_embeddings(labels)
 		if(config.applyIOconversionLayers):
-			inputState = pt.reshape(inputsEmbeddings, (config.N*config.L, config.embeddingLayerSize))
+			inputState = pt.reshape(inputsEmbeddings, (config.batchSize*config.sequenceLength, config.embeddingLayerSize))
 			inputState = self.inputLayer(inputState)
 			inputState = self.activationFunction(inputState)
-			inputState = pt.reshape(inputState, (config.N, config.L, config.hiddenLayerSize))
-			#print("inputState.shape = ", inputState.shape)
+			inputState = pt.reshape(inputState, (config.batchSize, config.sequenceLength, config.hiddenLayerSize))
 		else:
 			inputState = inputsEmbeddings
-			#print("inputState.shape = ", inputState.shape)
-		
-		for sequenceIndex in range(config.L):
-			sequentialInputState = inputState[:, sequenceIndex, :]
-			hiddenState = sequentialInputState
-			sequenceIndexMaxLayers = sequenceIndex
-			for layerIndex in range(sequenceIndexMaxLayers+1):
-				if(layerIndex == sequenceIndexMaxLayers):
-					self.hiddenStateLast[layerIndex] = hiddenState
-					self.outputStates[sequenceIndex] = hiddenState	#or self.outputStates[layerIndex]
-				else:
-					previousInput = self.hiddenStateLast[layerIndex]
-					currentInput = hiddenState
-					#print("previousInput.shape = ", previousInput.shape)
-					#print("currentInput.shape = ", currentInput.shape)
-					if(recursiveLayers):
-						saniLayer = self.saniLayer
+			
+		if(parallelProcessLayers):
+			hiddenState = inputState
+			for layerIndex in range(0, config.sequenceLength):
+				#print("layerIndex = ", layerIndex)
+				#print("hiddenState = ", hiddenState)
+				minSequenceIndex = layerIndex
+				blankSequentialHiddenStates = pt.zeros(hiddenState.shape[0], minSequenceIndex+1, hiddenState.shape[2]).to(device)
+				sequentialInputState = pt.reshape(hiddenState, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
+				currentInput = pt.cat((blankSequentialHiddenStates, hiddenState[:, minSequenceIndex+1:]), dim=1)
+				previousInput = pt.cat((blankSequentialHiddenStates, hiddenState[:, minSequenceIndex:-1]), dim=1)
+				currentInput = pt.reshape(currentInput, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
+				previousInput = pt.reshape(previousInput, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
+				currentOutput = self.processLayer(sequentialInputState, layerIndex, currentInput, previousInput)
+				currentOutput = pt.reshape(hiddenState, (config.batchSize, config.sequenceLength, config.hiddenLayerSize))
+				hiddenState = currentOutput
+			outputStates = pt.reshape(hiddenState, (config.batchSize, config.sequenceLength, config.hiddenLayerSize))
+		else:
+			for sequenceIndex in range(config.sequenceLength):
+				sequentialInputState = inputState[:, sequenceIndex, :]
+				hiddenState = sequentialInputState
+				sequenceIndexMaxLayers = sequenceIndex
+				for layerIndex in range(sequenceIndexMaxLayers+1):
+					if(layerIndex == sequenceIndexMaxLayers):
+						self.hiddenStateLastList[layerIndex] = hiddenState
+						self.outputStatesList[sequenceIndex] = hiddenState	#or self.outputStatesList[layerIndex]
 					else:
-						saniLayer = self.SANIlayers[layerIndex]
-					if(retainHiddenEmbeddingStructure):
-						combinedInput = pt.stack([previousInput, currentInput], dim=1)	#shape = [batchSize, numberOfHeads, numberOfInputChannels, ..]
-						combinedInput = pt.reshape(combinedInput, (config.N, self.numberOfHeads*self.numberOfInputChannels, 1))
-						currentOutput = self.saniLayer(combinedInput)
-						currentOutput = pt.reshape(currentOutput, (config.N, self.numberOfHeads))
-					else:
-						combinedInput = pt.concat((previousInput, currentInput), dim=1)	#CHECKTHIS
-						currentOutput = saniLayer(combinedInput)
-					currentOutput = self.activationFunction(currentOutput)
-					if(skipLayers):
-						currentOutput = pt.add(currentOutput*(1.0-skipLayersDominance), sequentialInputState)
-						#print("currentOutput.shape = ", currentOutput.shape)
-						if(skipLayersNorm):
-							currentOutput = self.layerNorm(currentOutput)
-					hiddenState = currentOutput
-					self.hiddenStateLast[layerIndex] = currentInput
+						previousInput = self.hiddenStateLastList[layerIndex]
+						currentInput = hiddenState
+						currentOutput = self.processLayer(sequentialInputState, layerIndex, currentInput, previousInput)
+						hiddenState = currentOutput
+						self.hiddenStateLastList[layerIndex] = currentInput
+			outputStates = pt.stack(self.outputStatesList, dim=1)
 			
 		if(config.applyIOconversionLayers):
-			outputState = pt.concat(self.outputStates, dim=0)
+			outputState = pt.reshape(outputStates, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
 			outputState = self.outputLayer(outputState)
 			outputState = self.activationFunction(outputState)
-			y = pt.reshape(outputState, (config.N, config.L, config.embeddingLayerSize))
-			#print("y.shape = ", y.shape)
+			y = pt.reshape(outputState, (config.batchSize, config.sequenceLength, config.embeddingLayerSize))
 		else:
-			y = pt.stack(self.outputStates, dim=1)
-			#print("y.shape = ", y.shape)
+			y = outputStates
 		yHat = inputsEmbeddings
 
 		loss = self.lossFunction(y, yHat)
 		
 		return loss
 	
+	def processLayer(self, sequentialInputState, layerIndex, currentInput, previousInput):
+		config = self.config
+		batchSize = currentInput.shape[0]
+		if(recursiveLayers):
+			saniLayer = self.saniLayer
+		else:
+			saniLayer = self.SANIlayers[layerIndex]
+		if(retainHiddenEmbeddingStructure):
+			combinedInput = pt.stack([previousInput, currentInput], dim=1)	#shape = [batchSize, numberOfHeads, numberOfInputChannels, ..]
+			combinedInput = pt.reshape(combinedInput, (batchSize, self.numberOfHeads*self.numberOfInputChannels, 1))
+			currentOutput = self.saniLayer(combinedInput)
+			currentOutput = pt.reshape(currentOutput, (batchSize, self.numberOfHeads))
+		else:
+			combinedInput = pt.concat((previousInput, currentInput), dim=1)	#CHECKTHIS
+			currentOutput = saniLayer(combinedInput)
+		currentOutput = self.activationFunction(currentOutput)
+		if(skipLayers):
+			currentOutput = pt.add(currentOutput*(1.0-skipLayersDominance), sequentialInputState)
+			if(skipLayersNorm):
+				currentOutput = self.layerNorm(currentOutput)
+		return currentOutput

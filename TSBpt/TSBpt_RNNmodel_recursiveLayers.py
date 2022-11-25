@@ -34,9 +34,9 @@ class RNNrecursiveLayersConfig():
 			self.num_layers = numberOfHiddenLayers	#Default: 1	#Number of recurrent layers. E.g., setting num_layers=2 would mean stacking two RNNs together to form a stacked RNN, with the second RNN taking in outputs of the first RNN and computing the final results
 			if(num_layers == 1):
 				print("RNNrecursiveLayersConfig warning: !recursiveLayers && (num_layers == 1)")
-		self.N = batchSize
-		self.L = sequenceLength
-		self.D = bidirectional	#default: 1 #2 if bidirectional=True otherwise 1
+		self.batchSize = batchSize
+		self.sequenceLength = sequenceLength
+		self.bidirectional = bidirectional	#default: 1 #2 if bidirectional=True otherwise 1
 		self.hiddenLayerSize = hiddenLayerSize
 		self.embeddingLayerSize = embeddingLayerSize	#input token embedding size (equivalent to roberta hidden_size)
 		self.pad_token_id = 1	#default=1 #https://huggingface.co/transformers/v2.11.0/model_doc/roberta.html 
@@ -61,14 +61,14 @@ class RNNrecursiveLayersModel(nn.Module):
 		
 		inputsEmbeddings = self.word_embeddings(labels)
 		if(config.applyIOconversionLayers):
-			inputState = pt.reshape(inputsEmbeddings, (config.N*config.L, config.embeddingLayerSize))
+			inputState = pt.reshape(inputsEmbeddings, (config.batchSize*config.sequenceLength, config.embeddingLayerSize))
 			inputState = self.inputLayer(inputState)
 			inputState = self.activationFunction(inputState)
-			inputState = pt.reshape(inputState, (config.N, config.L, config.hiddenLayerSize))
+			inputState = pt.reshape(inputState, (config.batchSize, config.sequenceLength, config.hiddenLayerSize))
 		else:
 			inputState = inputsEmbeddings
 		
-		hn = pt.zeros(config.num_layers*config.D, config.N, config.hiddenLayerSize).to(device)	#randn
+		hn = pt.zeros(config.num_layers*config.bidirectional, config.batchSize, config.hiddenLayerSize).to(device)	#randn	#https://pytorch.org/docs/stable/generated/torch.nn.RNN.html
 		
 		hiddenState = inputState
 		if(recursiveLayers):
@@ -80,10 +80,10 @@ class RNNrecursiveLayersModel(nn.Module):
 		outputState = hiddenState
 		
 		if(config.applyIOconversionLayers):
-			outputState = pt.reshape(outputState, (config.N*config.L, config.hiddenLayerSize))
+			outputState = pt.reshape(outputState, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
 			outputState = self.outputLayer(outputState)
 			outputState = self.activationFunction(outputState)
-			y = pt.reshape(outputState, (config.N, config.L, config.embeddingLayerSize))
+			y = pt.reshape(outputState, (config.batchSize, config.sequenceLength, config.embeddingLayerSize))
 		else:
 			y = outputState
 		yHat = inputsEmbeddings
