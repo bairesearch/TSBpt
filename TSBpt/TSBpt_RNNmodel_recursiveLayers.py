@@ -20,8 +20,10 @@ TSBpt RNN model recursiveLayers
 import torch as pt
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+from transformers.activations import gelu
 
 recursiveLayers = True
+calculateVocabPredictionHeadLoss = True	#apply loss to vocubulary predictions (rather than embedding predictions)
 
 class RNNrecursiveLayersConfig():
 	def __init__(self, vocabularySize, numberOfHiddenLayers, batchSize, sequenceLength, bidirectional, hiddenLayerSize, embeddingLayerSize):
@@ -43,7 +45,28 @@ class RNNrecursiveLayersConfig():
 		self.applyIOconversionLayers = False
 		if(embeddingLayerSize != hiddenLayerSize):
 			self.applyIOconversionLayers = True
-		
+		self.layer_norm_eps = 1e-12	#https://huggingface.co/transformers/v4.2.2/_modules/transformers/models/bert/configuration_bert.html#BertConfig
+
+#based on RobertaLMHead
+class ModelVocabPredictionHead(nn.Module):
+	def __init__(self, config):
+		super().__init__()
+		self.dense = nn.Linear(config.hiddenLayerSize, config.hiddenLayerSize)
+		self.layer_norm = nn.LayerNorm(config.hiddenLayerSize, eps=config.layer_norm_eps)
+		self.decoder = nn.Linear(config.hiddenLayerSize, config.vocab_size)
+		self.bias = nn.Parameter(pt.zeros(config.vocab_size))
+		self.decoder.bias = self.bias
+
+	def forward(self, features, **kwargs):
+		x = self.dense(features)
+		x = gelu(x)
+		x = self.layer_norm(x)
+		x = self.decoder(x)
+		return x
+
+	def _tie_weights(self):
+		self.bias = self.decoder.bias
+						
 class RNNrecursiveLayersModel(nn.Module):
 	def __init__(self, config):
 		super().__init__()
@@ -53,7 +76,12 @@ class RNNrecursiveLayersModel(nn.Module):
 		if(config.applyIOconversionLayers):
 			self.inputLayer = nn.Linear(config.embeddingLayerSize, config.hiddenLayerSize)
 			self.outputLayer = nn.Linear(config.hiddenLayerSize, config.embeddingLayerSize)
-		self.lossFunction = CrossEntropyLoss()	#CHECKTHIS
+		self.activationFunction = pt.nn.ReLU()
+		if(calculateVocabPredictionHeadLoss):
+			self.lossFunction = CrossEntropyLoss()
+		else:
+			self.lossFunction = MSELoss()
+		self.predictionHead = ModelVocabPredictionHead(config)
 		
 	def forward(self, labels, device):
 		
@@ -79,16 +107,20 @@ class RNNrecursiveLayersModel(nn.Module):
 			hiddenState, hn = rnnLayer(hiddenState, hn)
 		outputState = hiddenState
 		
-		if(config.applyIOconversionLayers):
-			outputState = pt.reshape(outputState, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
-			outputState = self.outputLayer(outputState)
-			outputState = self.activationFunction(outputState)
-			y = pt.reshape(outputState, (config.batchSize, config.sequenceLength, config.embeddingLayerSize))
+		if(calculateVocabPredictionHeadLoss):
+			predictionScores = self.predictionHead(outputState)
+			loss = self.lossFunction(predictionScores.view(-1, config.vocab_size), labels.view(-1))
 		else:
+			if(config.applyIOconversionLayers):
+				outputState = pt.reshape(outputState, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
+				outputState = self.outputLayer(outputState)
+				#outputState = self.activationFunction(outputState)
+				outputState = pt.reshape(outputState, (config.batchSize, config.sequenceLength, config.embeddingLayerSize))
+				#print("outputState.shape = ", outputState.shape)
 			y = outputState
-		yHat = inputsEmbeddings
-
-		loss = self.lossFunction(y, yHat)
-		
-		return loss
+			yHat = inputsEmbeddings
+			loss = self.lossFunction(y, yHat)
+			predictionScores = None
+					
+		return loss, predictionScores
 	

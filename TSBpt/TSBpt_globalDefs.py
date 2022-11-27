@@ -79,3 +79,5 @@ customMaskTokenID = 4	#3
 fractionOfMaskedTokens = 0.15
 
 vocabularySize = 30522	#default: 30522
+
+accuracyTopN = 1	#default: 1	#>= 1	#calculates batch accuracy based on top n dictionary predictions

@@ -20,14 +20,16 @@ TSBpt SANI model recursiveLayers
 import torch as pt
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+from transformers.activations import gelu
 
 recursiveLayers = True
 skipLayers = True
 if(skipLayers):
 	skipLayersDominance = 0.9	#degree of sequentialInputState preservation (direct recursive/loop connection) as signal is propagated to higher layers
 	skipLayersNorm = True
-retainHiddenEmbeddingStructure = True	#experimental	#do not mix hidden embeddings (for every unit/neuron in hidden layer, calculate new value based on current and previous value)
+retainHiddenEmbeddingStructure = False	#experimental	#do not mix hidden embeddings (for every unit/neuron in hidden layer, calculate new value based on current and previous value)
 parallelProcessLayers = True
+calculateVocabPredictionHeadLoss = True	#apply loss to vocubulary predictions (rather than embedding predictions)
 
 class SANIrecursiveLayersConfig():
 	def __init__(self, vocabularySize, batchSize, sequenceLength, hiddenLayerSize, embeddingLayerSize):
@@ -42,14 +44,35 @@ class SANIrecursiveLayersConfig():
 		self.applyIOconversionLayers = False
 		if(embeddingLayerSize != hiddenLayerSize):
 			self.applyIOconversionLayers = True
-				
+		self.layer_norm_eps = 1e-12	#https://huggingface.co/transformers/v4.2.2/_modules/transformers/models/bert/configuration_bert.html#BertConfig
+
+#based on RobertaLMHead
+class ModelVocabPredictionHead(nn.Module):
+	def __init__(self, config):
+		super().__init__()
+		self.dense = nn.Linear(config.hiddenLayerSize, config.hiddenLayerSize)
+		self.layer_norm = nn.LayerNorm(config.hiddenLayerSize, eps=config.layer_norm_eps)
+		self.decoder = nn.Linear(config.hiddenLayerSize, config.vocab_size)
+		self.bias = nn.Parameter(pt.zeros(config.vocab_size))
+		self.decoder.bias = self.bias
+
+	def forward(self, features, **kwargs):
+		x = self.dense(features)
+		x = gelu(x)
+		x = self.layer_norm(x)
+		x = self.decoder(x)
+		return x
+
+	def _tie_weights(self):
+		self.bias = self.decoder.bias
+						
 class SANIrecursiveLayersModel(nn.Module):
 	def __init__(self, config):
 		super().__init__()
 		self.config = config
 		self.word_embeddings = nn.Embedding(config.vocab_size, config.embeddingLayerSize, padding_idx=config.pad_token_id)
+		self.outputStateList = [None]*config.num_layers
 		if(not parallelProcessLayers):
-			self.outputStatesList = [None]*config.num_layers
 			self.hiddenStateLastList = [None]*config.num_layers	#last activated hidden state of each layer
 			for layerIndex in range(config.num_layers):
 				self.hiddenStateLastList[layerIndex] = pt.zeros([config.batchSize, config.hiddenLayerSize])
@@ -63,11 +86,15 @@ class SANIrecursiveLayersModel(nn.Module):
 		if(config.applyIOconversionLayers):
 			self.inputLayer = nn.Linear(config.embeddingLayerSize, config.hiddenLayerSize)
 			self.outputLayer = nn.Linear(config.hiddenLayerSize, config.embeddingLayerSize)
-		self.lossFunction = CrossEntropyLoss()	#CHECKTHIS
 		self.activationFunction = pt.nn.ReLU()
+		if(calculateVocabPredictionHeadLoss):
+			self.lossFunction = CrossEntropyLoss()
+		else:
+			self.lossFunction = MSELoss()
 		if(skipLayers):
 			if(skipLayersNorm):
 				self.layerNorm = pt.nn.LayerNorm(config.hiddenLayerSize)
+		self.predictionHead = ModelVocabPredictionHead(config)
 
 	def generateSANIlayer(self, hiddenLayerSize):
 		#https://stackoverflow.com/questions/58374980/run-multiple-models-of-an-ensemble-in-parallel-with-pytorch/58389075#58389075
@@ -97,19 +124,25 @@ class SANIrecursiveLayersModel(nn.Module):
 		if(parallelProcessLayers):
 			hiddenState = inputState
 			for layerIndex in range(0, config.sequenceLength):
-				#print("layerIndex = ", layerIndex)
-				#print("hiddenState = ", hiddenState)
-				minSequenceIndex = layerIndex
-				blankSequentialHiddenStates = pt.zeros(hiddenState.shape[0], minSequenceIndex+1, hiddenState.shape[2]).to(device)
-				sequentialInputState = pt.reshape(hiddenState, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
-				currentInput = pt.cat((blankSequentialHiddenStates, hiddenState[:, minSequenceIndex+1:]), dim=1)
-				previousInput = pt.cat((blankSequentialHiddenStates, hiddenState[:, minSequenceIndex:-1]), dim=1)
-				currentInput = pt.reshape(currentInput, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
-				previousInput = pt.reshape(previousInput, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
-				currentOutput = self.processLayer(sequentialInputState, layerIndex, currentInput, previousInput)
-				currentOutput = pt.reshape(hiddenState, (config.batchSize, config.sequenceLength, config.hiddenLayerSize))
-				hiddenState = currentOutput
-			outputStates = pt.reshape(hiddenState, (config.batchSize, config.sequenceLength, config.hiddenLayerSize))
+				if(layerIndex < config.sequenceLength-2):
+					#print("layerIndex = ", layerIndex)
+					#print("hiddenState.shape = ", hiddenState.shape)
+					minSequenceIndex = layerIndex
+					blankSequentialHiddenStates = pt.zeros(hiddenState.shape[0], minSequenceIndex+1, hiddenState.shape[2]).to(device)
+					sequentialInputState = pt.reshape(hiddenState, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
+					previousInput = pt.cat((blankSequentialHiddenStates, hiddenState[:, minSequenceIndex:-1]), dim=1)
+					currentInput = pt.cat((blankSequentialHiddenStates, hiddenState[:, minSequenceIndex+1:]), dim=1)
+					previousInput = pt.reshape(previousInput, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
+					currentInput = pt.reshape(currentInput, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
+					currentOutput = self.processLayer(sequentialInputState, layerIndex, currentInput, previousInput)
+					currentOutput = pt.reshape(hiddenState, (config.batchSize, config.sequenceLength, config.hiddenLayerSize))
+					hiddenState = currentOutput
+					currentOutputSequentialIndex = currentOutput[:, minSequenceIndex+1]
+				else:
+					#last two tokens in window provide no prediction (pad hidden states with zeros). final prediction uses index(N-2) and index(N-1) to predict next token
+					currentOutputSequentialIndex = pt.zeros(config.batchSize, config.hiddenLayerSize).to(device)	#padding
+				self.outputStateList[layerIndex] = currentOutputSequentialIndex
+			outputState = pt.stack(self.outputStateList, dim=1)
 		else:
 			for sequenceIndex in range(config.sequenceLength):
 				sequentialInputState = inputState[:, sequenceIndex, :]
@@ -118,27 +151,33 @@ class SANIrecursiveLayersModel(nn.Module):
 				for layerIndex in range(sequenceIndexMaxLayers+1):
 					if(layerIndex == sequenceIndexMaxLayers):
 						self.hiddenStateLastList[layerIndex] = hiddenState
-						self.outputStatesList[sequenceIndex] = hiddenState	#or self.outputStatesList[layerIndex]
+						self.outputStateList[sequenceIndex] = hiddenState	#or self.outputStateList[layerIndex]
 					else:
 						previousInput = self.hiddenStateLastList[layerIndex]
 						currentInput = hiddenState
 						currentOutput = self.processLayer(sequentialInputState, layerIndex, currentInput, previousInput)
 						hiddenState = currentOutput
 						self.hiddenStateLastList[layerIndex] = currentInput
-			outputStates = pt.stack(self.outputStatesList, dim=1)
+			outputState = pt.stack(self.outputStateList, dim=1)
 			
-		if(config.applyIOconversionLayers):
-			outputState = pt.reshape(outputStates, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
-			outputState = self.outputLayer(outputState)
-			outputState = self.activationFunction(outputState)
-			y = pt.reshape(outputState, (config.batchSize, config.sequenceLength, config.embeddingLayerSize))
+		if(calculateVocabPredictionHeadLoss):
+			predictionScores = self.predictionHead(outputState)
+			#used last layer hidden emeddings to predict next word
+			#print("predictionScores.shape = ", predictionScores.shape)
+			loss = self.lossFunction(predictionScores.view(-1, config.vocab_size), labels.view(-1))
 		else:
-			y = outputStates
-		yHat = inputsEmbeddings
-
-		loss = self.lossFunction(y, yHat)
-		
-		return loss
+			if(config.applyIOconversionLayers):
+				outputState = pt.reshape(outputState, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
+				outputState = self.outputLayer(outputState)
+				#outputState = self.activationFunction(outputState)
+				outputState = pt.reshape(outputState, (config.batchSize, config.sequenceLength, config.embeddingLayerSize))
+				#print("outputState.shape = ", outputState.shape)
+			y = outputState
+			yHat = inputsEmbeddings
+			loss = self.lossFunction(y, yHat)
+			predictionScores = None
+				
+		return loss, predictionScores
 	
 	def processLayer(self, sequentialInputState, layerIndex, currentInput, previousInput):
 		config = self.config

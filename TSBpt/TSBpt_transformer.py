@@ -15,6 +15,12 @@ see TSBpt_main.py
 # Description:
 TSBpt transformer
 
+- recursiveLayers:numberOfHiddenLayers=6 supports approximately 2^6 tokens per sentence (contextual window = 512 tokens)
+
+See RobertaForMaskedLM tutorial; 
+	https://huggingface.co/blog/how-to-train
+	https://towardsdatascience.com/how-to-train-a-bert-model-from-scratch-72cfce554fc6
+	
 """
 
 from TSBpt_globalDefs import *
@@ -83,8 +89,6 @@ if(not usePretainedModelDebug):
 		else:
 			pass	#model size = 255.6MB
 		
-accuracyTopN = 1	#default: 1	#>= 1	#calculates batch accuracy based on top n dictionary predictions
-
 
 import torch
 from transformers import RobertaConfig

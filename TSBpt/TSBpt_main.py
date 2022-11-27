@@ -19,13 +19,7 @@ source activate transformersenv
 python TSBpt_main.py
 
 # Description:
-TSBpt main - Transformer Syntactic Bias (TSB): trains a RoBERTa transformer with a number of syntactic inductive biases:
-- recursiveLayers
-	- Roberta number of layers = 6 supports approximately 2^6 words per sentence (contextual window = 512 tokens)
-
-See RobertaForMaskedLM tutorial; 
-	https://huggingface.co/blog/how-to-train
-	https://towardsdatascience.com/how-to-train-a-bert-model-from-scratch-72cfce554fc6
+TSBpt main - Transformer Syntactic Bias (TSB): various neural architectures with syntactic inductive biases (recursiveLayers)
 
 """
 
