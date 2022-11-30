@@ -1,4 +1,4 @@
-"""TSBpt_SANImodel_recursiveLayers.py
+"""TSBpt_SANImodel.py
 
 # Author:
 Richard Bruce Baxter - Copyright (c) 2022 Baxter AI (baxterai.com)
@@ -25,11 +25,12 @@ from transformers.activations import gelu
 recursiveLayers = True
 skipLayers = True
 if(skipLayers):
-	skipLayersDominance = 0.9	#degree of sequentialInputState preservation (direct recursive/loop connection) as signal is propagated to higher layers
+	skipLayersDominance = 0.0	#0.9	#sequentialInputState preservation bias (direct recursive/loop connection) as signal is propagated to higher layers
 	skipLayersNorm = True
 retainHiddenEmbeddingStructure = False	#experimental	#do not mix hidden embeddings (for every unit/neuron in hidden layer, calculate new value based on current and previous value)
 parallelProcessLayers = True
 calculateVocabPredictionHeadLoss = True	#apply loss to vocubulary predictions (rather than embedding predictions)
+applyIOconversionLayers = True	#ensure input embeddings are positive
 
 class SANIrecursiveLayersConfig():
 	def __init__(self, vocabularySize, batchSize, sequenceLength, hiddenLayerSize, embeddingLayerSize):
@@ -42,8 +43,11 @@ class SANIrecursiveLayersConfig():
 		self.embeddingLayerSize = embeddingLayerSize	#input token embedding size (equivalent to roberta hidden_size)
 		self.pad_token_id = 1	#default=1 #https://huggingface.co/transformers/v2.11.0/model_doc/roberta.html 
 		self.applyIOconversionLayers = False
-		if(embeddingLayerSize != hiddenLayerSize):
+		if(applyIOconversionLayers):
 			self.applyIOconversionLayers = True
+		else:
+			if(embeddingLayerSize != hiddenLayerSize):
+				print("error: !applyIOconversionLayers and (embeddingLayerSize != hiddenLayerSize)")
 		self.layer_norm_eps = 1e-12	#https://huggingface.co/transformers/v4.2.2/_modules/transformers/models/bert/configuration_bert.html#BertConfig
 
 #based on RobertaLMHead
@@ -127,6 +131,8 @@ class SANIrecursiveLayersModel(nn.Module):
 				if(layerIndex < config.sequenceLength-2):
 					#print("layerIndex = ", layerIndex)
 					#print("hiddenState.shape = ", hiddenState.shape)
+					#if(layerIndex == 100):
+					#	print("hiddenState.p = ", hiddenState.p)
 					minSequenceIndex = layerIndex
 					blankSequentialHiddenStates = pt.zeros(hiddenState.shape[0], minSequenceIndex+1, hiddenState.shape[2]).to(device)
 					sequentialInputState = pt.reshape(hiddenState, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
@@ -161,7 +167,9 @@ class SANIrecursiveLayersModel(nn.Module):
 			outputState = pt.stack(self.outputStateList, dim=1)
 			
 		if(calculateVocabPredictionHeadLoss):
+			#print("outputState.v = ", outputState.v)
 			predictionScores = self.predictionHead(outputState)
+			#print("predictionScores.v = ", predictionScores.v)
 			#used last layer hidden emeddings to predict next word
 			#print("predictionScores.shape = ", predictionScores.shape)
 			loss = self.lossFunction(predictionScores.view(-1, config.vocab_size), labels.view(-1))

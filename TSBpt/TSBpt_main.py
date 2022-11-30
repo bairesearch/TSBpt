@@ -13,6 +13,7 @@ conda install python=3.7	[transformers not currently supported by; conda install
 pip install datasets
 pip install transfomers==4.23.1
 pip install torch
+pip install lovely-tensors
 
 # Usage:
 source activate transformersenv
@@ -85,7 +86,11 @@ def trainDataset(tokenizer, paths):
 		pathIndexMax = int(numberOfDataFiles*trainSplitFraction)
 	else:
 		pathIndexMax = pathIndexMin+trainNumberOfDataFiles
-	loader = TSBpt_data.createDataLoader(tokenizer, paths, pathIndexMin, pathIndexMax)
+	if(useAlgorithmTransformer):
+		useMLM = True
+	else:
+		useMLM = False
+	loader = TSBpt_data.createDataLoader(useMLM, tokenizer, paths, pathIndexMin, pathIndexMax)
 	
 	for epoch in range(trainStartEpoch, trainStartEpoch+trainNumberOfEpochs):
 		loop = tqdm(loader, leave=True)

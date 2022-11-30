@@ -26,11 +26,11 @@ See RobertaForMaskedLM tutorial;
 from TSBpt_globalDefs import *
 import TSBpt_data
 
-from TSBpt_modeling_roberta_recursiveLayers import recursiveLayers
+from TSBpt_transformerModel import recursiveLayers
 
 if(recursiveLayers):
-	from TSBpt_modeling_roberta_recursiveLayers import sharedLayerWeights
-	from TSBpt_modeling_roberta_recursiveLayers import sharedLayerWeightsOutput
+	from TSBpt_transformerModel import sharedLayerWeights
+	from TSBpt_transformerModel import sharedLayerWeightsOutput
 	recursiveLayersNormaliseNumParameters = False	#default: True	#optional	#if use recursiveLayers normalise/equalise num of parameters with respect to !recursiveLayers
 	if(recursiveLayersNormaliseNumParameters):
 		recursiveLayersNormaliseNumParametersIntermediate = True	#normalise intermediateSize parameters also
@@ -93,7 +93,7 @@ if(not usePretainedModelDebug):
 import torch
 from transformers import RobertaConfig
 if(recursiveLayers):
-	from TSBpt_modeling_roberta_recursiveLayers import RobertaForMaskedLM
+	from TSBpt_transformerModel import RobertaForMaskedLM
 else:
 	from transformers import RobertaForMaskedLM
 	
@@ -129,36 +129,8 @@ def propagate(device, model, tokenizer, batch):
 
 	outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
 
-	accuracy = getAccuracy(tokenizer, input_ids, attention_mask, labels, outputs)
+	accuracy = TSBpt_data.getAccuracy(tokenizer, input_ids, attention_mask, labels, outputs.logits)
 	loss = outputs.loss
 	
 	return loss, accuracy
 
-
-def getAccuracy(tokenizer, input_ids, attention_mask, labels, outputs):
-	tokenizerNumberTokens = TSBpt_data.getTokenizerLength(tokenizer)
-	
-	tokenLogits = (outputs.logits).detach()
-
-	tokenLogitsTopIndex = torch.topk(tokenLogits, accuracyTopN).indices	#get highest n scored entries from dictionary	#tokenLogitsTopIndex.shape = batchSize, sequenceMaxNumTokens, accuracyTopN
-	
-	maskTokenIndex = torch.where(input_ids==customMaskTokenID, 1.0, 0.0)	#maskTokenIndexFloat = maskTokenIndex.float()	
-
-	if(accuracyTopN == 1):
-		tokenLogitsTopIndex = torch.squeeze(tokenLogitsTopIndex)	#tokenLogitsTopIndex[:, :, 1] -> #tokenLogitsTopIndex[:, :] 	
-
-		comparison = (tokenLogitsTopIndex == labels).float()
-		comparisonMasked = torch.multiply(comparison, maskTokenIndex)
-		accuracy = (torch.sum(comparisonMasked)/torch.sum(maskTokenIndex)).cpu().numpy() 
-	else:
-		labelsExpanded = torch.unsqueeze(labels, dim=2)
-		labelsExpanded = labelsExpanded.expand(-1, -1, tokenLogitsTopIndex.shape[2])	#labels broadcasted to [batchSize, sequenceMaxNumTokens, accuracyTopN]
-		comparison = (tokenLogitsTopIndex == labelsExpanded).float()
-		maskTokenIndexExpanded = torch.unsqueeze(maskTokenIndex, dim=2)
-		maskTokenIndexExpanded = maskTokenIndexExpanded.expand(-1, -1, tokenLogitsTopIndex.shape[2])	#maskTokenIndex broadcasted to [batchSize, sequenceMaxNumTokens, accuracyTopN]
-		comparisonMasked = torch.multiply(comparison, maskTokenIndexExpanded)	#maskTokenIndex broadcasted to [batchSize, sequenceMaxNumTokens, accuracyTopN]
-		accuracy = (torch.sum(comparisonMasked)/torch.sum(maskTokenIndex)).cpu().numpy() 	#or torch.sum(comparisonMasked)/(torch.sum(maskTokenIndexExpanded)/accuracyTopN)
-	
-	#accuracy2 = (torch.mean(comparisonMasked)).cpu().numpy()
-	
-	return accuracy

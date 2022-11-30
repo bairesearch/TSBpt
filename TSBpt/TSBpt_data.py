@@ -23,14 +23,14 @@ from tqdm.auto import tqdm
 from tokenizers import ByteLevelBPETokenizer
 from transformers import RobertaTokenizer
 import os
+from TSBpt_globalDefs import *
 
-#torch.set_printoptions(threshold=10_000)
-torch.set_printoptions(profile="full")
+if(not useLovelyTensors):
+	torch.set_printoptions(profile="full")
 
 #store models to large datasets partition cache folder (not required)
 #os.environ['TRANSFORMERS_CACHE'] = '/media/user/datasets/models/'	#select partition with 3TB+ disk space
 
-from TSBpt_globalDefs import *
 
 def downloadDataset():
 	if(useSmallDatasetDebug):
@@ -77,12 +77,18 @@ def loadTokenizer():
 	tokenizer = RobertaTokenizer.from_pretrained(modelFolderName, max_len=sequenceMaxNumTokens)
 	return tokenizer
 
-def addMaskTokens(input_ids):
-	rand = torch.rand(input_ids.shape)
-	mask_arr = (rand < fractionOfMaskedTokens) * (input_ids > 2)	#or * (input_ids != 0) * (input_ids != 1) * (input_ids != 2)
-	for i in range(input_ids.shape[0]):
-		selection = torch.flatten(mask_arr[i].nonzero()).tolist()
-		input_ids[i, selection] = customMaskTokenID
+def addMaskTokens(useMLM, input_ids):
+	if(useMLM):
+		rand = torch.rand(input_ids.shape)
+		mask_arr = (rand < fractionOfMaskedTokens) * (input_ids > 2)	#or * (input_ids != 0) * (input_ids != 1) * (input_ids != 2)
+		for i in range(input_ids.shape[0]):
+			selection = torch.flatten(mask_arr[i].nonzero()).tolist()
+			input_ids[i, selection] = customMaskTokenID
+	else:	
+		mask_arr = (input_ids > 2)	#or * (input_ids != 0) * (input_ids != 1) * (input_ids != 2)
+		for i in range(input_ids.shape[0]):
+			selection = torch.flatten(mask_arr[i].nonzero()).tolist()
+			input_ids[i, selection] = customMaskTokenID
 	return input_ids
 
 def dataFileIndexListContainsLastFile(dataFileIndexList, paths):
@@ -95,7 +101,8 @@ def dataFileIndexListContainsLastFile(dataFileIndexList, paths):
 	return containsDataFileLastSample
 	
 class DatasetHDD(torch.utils.data.Dataset):
-	def __init__(self, dataFileIndexList, paths, tokenizer):
+	def __init__(self, useMLM, dataFileIndexList, paths, tokenizer):
+		self.useMLM = useMLM
 		self.dataFileIndexList = dataFileIndexList
 		self.paths = paths
 		self.encodings = None
@@ -124,12 +131,6 @@ class DatasetHDD(torch.utils.data.Dataset):
 			with open(path, 'r', encoding='utf-8') as fp:
 				lines = fp.read().split('\n')
 
-			#sample = tokenizer(lines, max_length=sequenceMaxNumTokens, padding='max_length', truncation=True)
-			#labels = torch.tensor([x for x in sample['input_ids']])
-			#mask = torch.tensor([x for x in sample['attention_mask']])
-			#input_ids = labels.detach().clone() 
-			#input_ids = addMaskTokens(input_ids)
-			
 			sample = self.tokenizer(lines, max_length=sequenceMaxNumTokens, padding='max_length', truncation=True, return_tensors='pt')
 			input_ids = []
 			mask = []
@@ -137,7 +138,7 @@ class DatasetHDD(torch.utils.data.Dataset):
 			labels.append(sample.input_ids)
 			mask.append(sample.attention_mask)
 			sample_input_ids = (sample.input_ids).detach().clone()
-			input_ids.append(addMaskTokens(sample_input_ids))
+			input_ids.append(addMaskTokens(self.useMLM, sample_input_ids))
 			input_ids = torch.cat(input_ids)
 			mask = torch.cat(mask)
 			labels = torch.cat(labels)
@@ -146,12 +147,12 @@ class DatasetHDD(torch.utils.data.Dataset):
 		
 		return {key: tensor[itemIndexInSample] for key, tensor in self.encodings.items()}
 
-def createDataLoader(tokenizer, paths, pathIndexMin, pathIndexMax):
+def createDataLoader(useMLM, tokenizer, paths, pathIndexMin, pathIndexMax):
 
 	dataFileIndexList = list(range(pathIndexMin, pathIndexMax))
 	print("dataFileIndexList = ", dataFileIndexList)
 	
-	dataset = DatasetHDD(dataFileIndexList, paths, tokenizer)
+	dataset = DatasetHDD(useMLM, dataFileIndexList, paths, tokenizer)
 
 	loader = torch.utils.data.DataLoader(dataset, batch_size=batchSize, shuffle=False)	#shuffle not supported by DatasetHDD
 
@@ -161,4 +162,31 @@ def getTokenizerLength(tokenizer):
 	return len(tokenizer)	#Size of the full vocabulary with the added token	#https://github.com/huggingface/transformers/blob/main/src/transformers/tokenization_utils.py
 
 
+def getAccuracy(tokenizer, input_ids, attention_mask, labels, outputs):
+	tokenizerNumberTokens = getTokenizerLength(tokenizer)
+	
+	tokenLogits = outputs.detach()
+
+	tokenLogitsTopIndex = torch.topk(tokenLogits, accuracyTopN).indices	#get highest n scored entries from dictionary	#tokenLogitsTopIndex.shape = batchSize, sequenceMaxNumTokens, accuracyTopN
+	
+	maskTokenIndex = torch.where(input_ids==customMaskTokenID, 1.0, 0.0)	#maskTokenIndexFloat = maskTokenIndex.float()	
+
+	if(accuracyTopN == 1):
+		tokenLogitsTopIndex = torch.squeeze(tokenLogitsTopIndex)	#tokenLogitsTopIndex[:, :, 1] -> #tokenLogitsTopIndex[:, :] 	
+
+		comparison = (tokenLogitsTopIndex == labels).float()
+		comparisonMasked = torch.multiply(comparison, maskTokenIndex)
+		accuracy = (torch.sum(comparisonMasked)/torch.sum(maskTokenIndex)).cpu().numpy() 
+	else:
+		labelsExpanded = torch.unsqueeze(labels, dim=2)
+		labelsExpanded = labelsExpanded.expand(-1, -1, tokenLogitsTopIndex.shape[2])	#labels broadcasted to [batchSize, sequenceMaxNumTokens, accuracyTopN]
+		comparison = (tokenLogitsTopIndex == labelsExpanded).float()
+		maskTokenIndexExpanded = torch.unsqueeze(maskTokenIndex, dim=2)
+		maskTokenIndexExpanded = maskTokenIndexExpanded.expand(-1, -1, tokenLogitsTopIndex.shape[2])	#maskTokenIndex broadcasted to [batchSize, sequenceMaxNumTokens, accuracyTopN]
+		comparisonMasked = torch.multiply(comparison, maskTokenIndexExpanded)	#maskTokenIndex broadcasted to [batchSize, sequenceMaxNumTokens, accuracyTopN]
+		accuracy = (torch.sum(comparisonMasked)/torch.sum(maskTokenIndex)).cpu().numpy() 	#or torch.sum(comparisonMasked)/(torch.sum(maskTokenIndexExpanded)/accuracyTopN)
+	
+	#accuracy2 = (torch.mean(comparisonMasked)).cpu().numpy()
+	
+	return accuracy
 

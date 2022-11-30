@@ -1,4 +1,4 @@
-"""TSBpt_RNNmodel_recursiveLayers.py
+"""TSBpt_RNNmodel.py
 
 # Author:
 Richard Bruce Baxter - Copyright (c) 2022 Baxter AI (baxterai.com)
@@ -24,6 +24,7 @@ from transformers.activations import gelu
 
 recursiveLayers = True
 calculateVocabPredictionHeadLoss = True	#apply loss to vocubulary predictions (rather than embedding predictions)
+applyIOconversionLayers = True	#ensure input embeddings are positive
 
 class RNNrecursiveLayersConfig():
 	def __init__(self, vocabularySize, numberOfHiddenLayers, batchSize, sequenceLength, bidirectional, hiddenLayerSize, embeddingLayerSize):
@@ -43,8 +44,11 @@ class RNNrecursiveLayersConfig():
 		self.embeddingLayerSize = embeddingLayerSize	#input token embedding size (equivalent to roberta hidden_size)
 		self.pad_token_id = 1	#default=1 #https://huggingface.co/transformers/v2.11.0/model_doc/roberta.html 
 		self.applyIOconversionLayers = False
-		if(embeddingLayerSize != hiddenLayerSize):
+		if(applyIOconversionLayers):
 			self.applyIOconversionLayers = True
+		else:
+			if(embeddingLayerSize != hiddenLayerSize):
+				print("error: !applyIOconversionLayers and (embeddingLayerSize != hiddenLayerSize)")
 		self.layer_norm_eps = 1e-12	#https://huggingface.co/transformers/v4.2.2/_modules/transformers/models/bert/configuration_bert.html#BertConfig
 
 #based on RobertaLMHead

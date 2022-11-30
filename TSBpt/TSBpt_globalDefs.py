@@ -17,11 +17,17 @@ TSBpt globalDefs
 
 """
 
+useLovelyTensors = True
+if(useLovelyTensors):
+	import lovely_tensors as lt
+	lt.monkey_patch()
+
 #recursive algorithm selection:
 useAlgorithmTransformer = False
 useAlgorithmRNN = False
 useAlgorithmSANI = True
 
+relativeFolderLocations = False
 userName = 'user'	#default: user
 
 useSmallDatasetDebug = False
@@ -65,9 +71,14 @@ numberOfSamplesPerDataFileLast = 423
 dataFileLastSampleIndex = 30423
 
 #storage location vars (requires 4TB harddrive);
-downloadCacheFolder = '/media/' + userName + '/datasets/cache'
-dataFolder = '/media/' + userName + '/datasets/data'
-modelFolderName = '/media/' + userName + '/large/source/ANNpython/TSBpt/model'
+if(relativeFolderLocations):
+	downloadCacheFolder = 'cache'
+	dataFolder = 'data'
+	modelFolderName = 'model'
+else:
+	downloadCacheFolder = '/media/' + userName + '/datasets/cache'
+	dataFolder = '/media/' + userName + '/datasets/data'
+	modelFolderName = '/media/' + userName + '/large/source/ANNpython/TSBpt/model'
 
 modelSaveNumberOfBatches = 1000	#resave model after x training batches
 

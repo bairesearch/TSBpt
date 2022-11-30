@@ -22,7 +22,7 @@ import torch as pt
 from TSBpt_globalDefs import *
 import TSBpt_data
 
-from TSBpt_RNNmodel_recursiveLayers import recursiveLayers, RNNrecursiveLayersModel, RNNrecursiveLayersConfig, calculateVocabPredictionHeadLoss
+from TSBpt_RNNmodel import recursiveLayers, RNNrecursiveLayersModel, RNNrecursiveLayersConfig, calculateVocabPredictionHeadLoss
 
 embeddingLayerSize = 768
 hiddenLayerSize = 1024	#65536	#2^16 - large hidden size is required for recursive RNN as parameters are shared across a) sequence length and b) number of layers
@@ -59,33 +59,16 @@ def saveModel(model):
 	pt.save(model, modelPathName)
 
 def propagate(device, model, tokenizer, batch):
-	
+	input_ids = batch['input_ids'].to(device)
+	attention_mask = batch['attention_mask'].to(device)
 	labels = batch['labels'].to(device)
-	loss, predictionScores = model(labels, device)
+	
+	loss, outputs = model(labels, device)
+	
 	if(calculateVocabPredictionHeadLoss):
-		accuracy = getAccuracy(tokenizer, labels, predictionScores)
+		accuracy = TSBpt_data.getAccuracy(tokenizer, input_ids, attention_mask, labels, outputs)
 	else:
 		accuracy = 0.0
 	
 	return loss, accuracy
 
-def getAccuracy(tokenizer, labels, outputs):
-	tokenizerNumberTokens = TSBpt_data.getTokenizerLength(tokenizer)
-	
-	tokenLogits = outputs.detach()
-
-	tokenLogitsTopIndex = pt.topk(tokenLogits, accuracyTopN).indices	#get highest n scored entries from dictionary	#tokenLogitsTopIndex.shape = batchSize, sequenceMaxNumTokens, accuracyTopN
-	
-	if(accuracyTopN == 1):
-		tokenLogitsTopIndex = pt.squeeze(tokenLogitsTopIndex)	#tokenLogitsTopIndex[:, :, 1] -> #tokenLogitsTopIndex[:, :] 	
-
-		comparison = (tokenLogitsTopIndex == labels).float()
-		accuracy = (pt.sum(comparison)/comparison.nelement()).cpu().numpy()
-	else:
-		labelsExpanded = pt.unsqueeze(labels, dim=2)
-		labelsExpanded = labelsExpanded.expand(-1, -1, tokenLogitsTopIndex.shape[2])	#labels broadcasted to [batchSize, sequenceMaxNumTokens, accuracyTopN]
-		comparison = (tokenLogitsTopIndex == labelsExpanded).float()
-		
-		accuracy = (pt.sum(comparison)/comparison.nelement()).cpu().numpy()
-		
-	return accuracy
