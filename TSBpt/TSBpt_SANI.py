@@ -24,11 +24,13 @@ import torch as pt
 from TSBpt_globalDefs import *
 import TSBpt_data
 
-from TSBpt_SANImodel import recursiveLayers, SANIrecursiveLayersModel, SANIrecursiveLayersConfig, calculateVocabPredictionHeadLoss
+from TSBpt_SANImodel import recursiveLayers, SANIrecursiveLayersModel, SANIrecursiveLayersConfig, calculateVocabPredictionHeadLoss, applyIOconversionLayers
 
-embeddingLayerSize = 768
 hiddenLayerSize = 1024	#1024	#8192	#1024	#depends on GPU memory	#2^16 = 65536 - large hidden size is required for recursive SANI as parameters are shared across a) sequence length and b) number of layers
-#numberOfHiddenLayers = 6
+if(applyIOconversionLayers):
+	embeddingLayerSize = 768
+else:
+	embeddingLayerSize = hiddenLayerSize
 
 modelPathName = modelFolderName + '/modelSANI.pt'
 

@@ -22,10 +22,14 @@ import torch as pt
 from TSBpt_globalDefs import *
 import TSBpt_data
 
-from TSBpt_RNNmodel import recursiveLayers, RNNrecursiveLayersModel, RNNrecursiveLayersConfig, calculateVocabPredictionHeadLoss
+from TSBpt_RNNmodel import recursiveLayers, RNNrecursiveLayersModel, RNNrecursiveLayersConfig, calculateVocabPredictionHeadLoss, applyIOconversionLayers
 
-embeddingLayerSize = 768
 hiddenLayerSize = 1024	#65536	#2^16 - large hidden size is required for recursive RNN as parameters are shared across a) sequence length and b) number of layers
+if(applyIOconversionLayers):
+	embeddingLayerSize = 768
+else:
+	embeddingLayerSize = hiddenLayerSize
+
 numberOfHiddenLayers = 6
 
 modelPathName = modelFolderName + '/modelRNN.pt'

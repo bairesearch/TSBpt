@@ -57,10 +57,10 @@ if(useAlgorithmTransformer):
 	batchSize = 8	#default: 8	#8 and 16 train at approx same rate (16 uses more GPU ram)	#depends on GPU RAM	#with 12GB GPU RAM, batchSize max = 16
 	learningRate = 1e-4
 elif(useAlgorithmRNN):
-	batchSize = 8  
+	batchSize = 8
 	learningRate = 1e-4
 elif(useAlgorithmSANI):
-	batchSize = 8	#2	#depends on GPU memory
+	batchSize = 8	#8	#2	#depends on GPU memory
 	learningRate = 1e-4
 
 if(useSmallBatchSizeDebug):

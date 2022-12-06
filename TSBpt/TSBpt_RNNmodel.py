@@ -44,11 +44,6 @@ class RNNrecursiveLayersConfig():
 		self.embeddingLayerSize = embeddingLayerSize	#input token embedding size (equivalent to roberta hidden_size)
 		self.pad_token_id = 1	#default=1 #https://huggingface.co/transformers/v2.11.0/model_doc/roberta.html 
 		self.applyIOconversionLayers = False
-		if(applyIOconversionLayers):
-			self.applyIOconversionLayers = True
-		else:
-			if(embeddingLayerSize != hiddenLayerSize):
-				print("error: !applyIOconversionLayers and (embeddingLayerSize != hiddenLayerSize)")
 		self.layer_norm_eps = 1e-12	#https://huggingface.co/transformers/v4.2.2/_modules/transformers/models/bert/configuration_bert.html#BertConfig
 
 #based on RobertaLMHead
@@ -77,7 +72,7 @@ class RNNrecursiveLayersModel(nn.Module):
 		self.config = config
 		self.word_embeddings = nn.Embedding(config.vocab_size, config.embeddingLayerSize, padding_idx=config.pad_token_id)
 		self.rnnLayer = nn.RNN(input_size=config.hiddenLayerSize, hidden_size=config.hiddenLayerSize, num_layers=config.num_layers, batch_first=True)
-		if(config.applyIOconversionLayers):
+		if(applyIOconversionLayers):
 			self.inputLayer = nn.Linear(config.embeddingLayerSize, config.hiddenLayerSize)
 			self.outputLayer = nn.Linear(config.hiddenLayerSize, config.embeddingLayerSize)
 		self.activationFunction = pt.nn.ReLU()
@@ -91,14 +86,14 @@ class RNNrecursiveLayersModel(nn.Module):
 		
 		config = self.config
 		
-		inputsEmbeddings = self.word_embeddings(labels)
-		if(config.applyIOconversionLayers):
-			inputState = pt.reshape(inputsEmbeddings, (config.batchSize*config.sequenceLength, config.embeddingLayerSize))
+		inputEmbeddings = self.word_embeddings(labels)
+		if(applyIOconversionLayers):
+			inputState = pt.reshape(inputEmbeddings, (config.batchSize*config.sequenceLength, config.embeddingLayerSize))
 			inputState = self.inputLayer(inputState)
 			inputState = self.activationFunction(inputState)
 			inputState = pt.reshape(inputState, (config.batchSize, config.sequenceLength, config.hiddenLayerSize))
 		else:
-			inputState = inputsEmbeddings
+			inputState = inputEmbeddings
 		
 		hn = pt.zeros(config.num_layers*config.bidirectional, config.batchSize, config.hiddenLayerSize).to(device)	#randn	#https://pytorch.org/docs/stable/generated/torch.nn.RNN.html
 		
@@ -115,14 +110,14 @@ class RNNrecursiveLayersModel(nn.Module):
 			predictionScores = self.predictionHead(outputState)
 			loss = self.lossFunction(predictionScores.view(-1, config.vocab_size), labels.view(-1))
 		else:
-			if(config.applyIOconversionLayers):
+			if(applyIOconversionLayers):
 				outputState = pt.reshape(outputState, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
 				outputState = self.outputLayer(outputState)
 				#outputState = self.activationFunction(outputState)
 				outputState = pt.reshape(outputState, (config.batchSize, config.sequenceLength, config.embeddingLayerSize))
 				#print("outputState.shape = ", outputState.shape)
 			y = outputState
-			yHat = inputsEmbeddings
+			yHat = inputEmbeddings
 			loss = self.lossFunction(y, yHat)
 			predictionScores = None
 					

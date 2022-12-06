@@ -21,6 +21,9 @@ import torch as pt
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from transformers.activations import gelu
+import numpy as np
+
+parallelProcessLayers = True
 
 recursiveLayers = True
 skipLayers = True
@@ -28,10 +31,24 @@ if(skipLayers):
 	skipLayersDominance = 0.0	#0.9	#sequentialInputState preservation bias (direct recursive/loop connection) as signal is propagated to higher layers
 	skipLayersNorm = True
 retainHiddenEmbeddingStructure = False	#experimental	#do not mix hidden embeddings (for every unit/neuron in hidden layer, calculate new value based on current and previous value)
-parallelProcessLayers = True
-calculateVocabPredictionHeadLoss = True	#apply loss to vocubulary predictions (rather than embedding predictions)
-applyIOconversionLayers = True	#ensure input embeddings are positive
 
+generatePredictionsForEverySubsequence = False	#uses high amount of GPU ram (may not support parallelProcessLayers)
+
+biologicalSimulationNoMultilayerBackprop = False
+if(biologicalSimulationNoMultilayerBackprop):
+	calculateVocabPredictionHeadLoss = False	#calculate loss for embedding predictions
+	applyIOconversionLayers = True	#CHECKTHIS - gradient will currently backpropagate through io conversion layers (for strict single layer backprop set to False or prevent gradient flow)
+else:
+	calculateVocabPredictionHeadLoss = True	#calculate loss for vocubulary predictions
+	applyIOconversionLayers = True
+	
+if(applyIOconversionLayers):
+	applyIOconversionLayersInput = True	#ensure input embeddings are positive
+	applyIOconversionLayersOutput = True
+else:
+	applyIOconversionLayersInput = False
+	applyIOconversionLayersOutput = False
+		
 class SANIrecursiveLayersConfig():
 	def __init__(self, vocabularySize, batchSize, sequenceLength, hiddenLayerSize, embeddingLayerSize):
 		self.vocab_size = vocabularySize
@@ -43,11 +60,6 @@ class SANIrecursiveLayersConfig():
 		self.embeddingLayerSize = embeddingLayerSize	#input token embedding size (equivalent to roberta hidden_size)
 		self.pad_token_id = 1	#default=1 #https://huggingface.co/transformers/v2.11.0/model_doc/roberta.html 
 		self.applyIOconversionLayers = False
-		if(applyIOconversionLayers):
-			self.applyIOconversionLayers = True
-		else:
-			if(embeddingLayerSize != hiddenLayerSize):
-				print("error: !applyIOconversionLayers and (embeddingLayerSize != hiddenLayerSize)")
 		self.layer_norm_eps = 1e-12	#https://huggingface.co/transformers/v4.2.2/_modules/transformers/models/bert/configuration_bert.html#BertConfig
 
 #based on RobertaLMHead
@@ -75,8 +87,16 @@ class SANIrecursiveLayersModel(nn.Module):
 		super().__init__()
 		self.config = config
 		self.word_embeddings = nn.Embedding(config.vocab_size, config.embeddingLayerSize, padding_idx=config.pad_token_id)
-		self.outputStateList = [None]*config.num_layers
-		if(not parallelProcessLayers):
+		if(parallelProcessLayers):
+			self.outputStateArray = np.empty([config.num_layers], dtype=object)
+			self.predictionLabelsArray = np.empty([config.num_layers], dtype=object)
+		else:
+			if(generatePredictionsForEverySubsequence):
+				self.outputStateArray = np.empty([config.num_layers, config.num_layers], dtype=object)
+				self.predictionLabelsArray = np.empty([config.num_layers, config.num_layers], dtype=object)
+			else:
+				self.outputStateArray = np.empty([config.num_layers], dtype=object)
+				self.predictionLabelsArray = np.empty([config.num_layers], dtype=object)
 			self.hiddenStateLastList = [None]*config.num_layers	#last activated hidden state of each layer
 			for layerIndex in range(config.num_layers):
 				self.hiddenStateLastList[layerIndex] = pt.zeros([config.batchSize, config.hiddenLayerSize])
@@ -87,7 +107,7 @@ class SANIrecursiveLayersModel(nn.Module):
 			for layerIndex in range(config.num_layers):
 				saniLayer = generateSANIlayer(self, config.hiddenLayerSize)
 				self.SANIlayers.append(saniLayer)
-		if(config.applyIOconversionLayers):
+		if(applyIOconversionLayers):
 			self.inputLayer = nn.Linear(config.embeddingLayerSize, config.hiddenLayerSize)
 			self.outputLayer = nn.Linear(config.hiddenLayerSize, config.embeddingLayerSize)
 		self.activationFunction = pt.nn.ReLU()
@@ -116,75 +136,141 @@ class SANIrecursiveLayersModel(nn.Module):
 		
 		config = self.config
 		
-		inputsEmbeddings = self.word_embeddings(labels)
-		if(config.applyIOconversionLayers):
-			inputState = pt.reshape(inputsEmbeddings, (config.batchSize*config.sequenceLength, config.embeddingLayerSize))
+		predictionLabels = labels
+		inputEmbeddings = self.word_embeddings(labels)
+		if(applyIOconversionLayersInput):
+			inputState = pt.reshape(inputEmbeddings, (config.batchSize*config.sequenceLength, config.embeddingLayerSize))
 			inputState = self.inputLayer(inputState)
 			inputState = self.activationFunction(inputState)
 			inputState = pt.reshape(inputState, (config.batchSize, config.sequenceLength, config.hiddenLayerSize))
 		else:
-			inputState = inputsEmbeddings
+			inputState = inputEmbeddings
 			
-		if(parallelProcessLayers):
+		#no prediction is generated for first and last token in sentence (requires at least 2 tokens to generate a prediction)
+		predictiveTokenOffset = 1
+		
+		if(parallelProcessLayers):	
+			#first two tokens in window generate a hidden representation for the second token (pad output states of 1st token with zeros), and are used to predict third token
+			for sequenceIndex in range(predictiveTokenOffset):
+				if(generatePredictionsForEverySubsequence):
+					self.outputStateArray[sequenceIndex] = pt.zeros(inputState.shape).to(device)
+					self.predictionLabelsArray[sequenceIndex] = pt.zeros(predictionLabels.shape).to(device)
+					self.outputStateArray[config.sequenceLength-sequenceIndex-1] = pt.zeros(inputState.shape).to(device)
+					self.predictionLabelsArray[config.sequenceLength-sequenceIndex-1] = pt.zeros(predictionLabels.shape).to(device)
+				else:
+					self.outputStateArray[sequenceIndex] = pt.zeros(inputState.shape[0], inputState.shape[2]).to(device)
+					self.predictionLabelsArray[sequenceIndex] = pt.zeros(predictionLabels.shape[0]).to(device)
+					self.outputStateArray[config.sequenceLength-sequenceIndex-1] = pt.zeros(inputState.shape[0], inputState.shape[2]).to(device)
+					self.predictionLabelsArray[config.sequenceLength-sequenceIndex-1] = pt.zeros(predictionLabels.shape[0]).to(device)
+					
 			hiddenState = inputState
 			for layerIndex in range(0, config.sequenceLength):
-				if(layerIndex < config.sequenceLength-2):
-					#print("layerIndex = ", layerIndex)
-					#print("hiddenState.shape = ", hiddenState.shape)
-					#if(layerIndex == 100):
-					#	print("hiddenState.p = ", hiddenState.p)
-					minSequenceIndex = layerIndex
-					blankSequentialHiddenStates = pt.zeros(hiddenState.shape[0], minSequenceIndex+1, hiddenState.shape[2]).to(device)
+				if((layerIndex >= predictiveTokenOffset) and (layerIndex < config.sequenceLength-predictiveTokenOffset)):
+					sequenceIndex = layerIndex
+					blankSequentialHiddenStates = pt.zeros(hiddenState.shape[0], sequenceIndex, hiddenState.shape[2]).to(device)
 					sequentialInputState = pt.reshape(hiddenState, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
-					previousInput = pt.cat((blankSequentialHiddenStates, hiddenState[:, minSequenceIndex:-1]), dim=1)
-					currentInput = pt.cat((blankSequentialHiddenStates, hiddenState[:, minSequenceIndex+1:]), dim=1)
+					previousInput = pt.cat((blankSequentialHiddenStates, hiddenState[:, sequenceIndex-predictiveTokenOffset:-predictiveTokenOffset]), dim=1)
+					currentInput = pt.cat((blankSequentialHiddenStates, hiddenState[:, sequenceIndex:]), dim=1)
 					previousInput = pt.reshape(previousInput, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
 					currentInput = pt.reshape(currentInput, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
 					currentOutput = self.processLayer(sequentialInputState, layerIndex, currentInput, previousInput)
 					currentOutput = pt.reshape(hiddenState, (config.batchSize, config.sequenceLength, config.hiddenLayerSize))
 					hiddenState = currentOutput
-					currentOutputSequentialIndex = currentOutput[:, minSequenceIndex+1]
-				else:
-					#last two tokens in window provide no prediction (pad hidden states with zeros). final prediction uses index(N-2) and index(N-1) to predict next token
-					currentOutputSequentialIndex = pt.zeros(config.batchSize, config.hiddenLayerSize).to(device)	#padding
-				self.outputStateList[layerIndex] = currentOutputSequentialIndex
-			outputState = pt.stack(self.outputStateList, dim=1)
+					if(generatePredictionsForEverySubsequence):
+						#last output does not provide a prediction
+						currentOutputLayerIndex1 = currentOutput[:, :-predictiveTokenOffset]
+						currentOutputLayerIndex2 = pt.zeros([currentOutput.shape[0], predictiveTokenOffset, currentOutput.shape[2]]).to(device)
+						currentOutputLayerIndex = pt.cat((currentOutputLayerIndex1, currentOutputLayerIndex2), dim=1)	
+						predictionLabelsLayerIndex1 = pt.zeros([predictionLabels.shape[0], sequenceIndex]).to(device)
+						predictionLabelsLayerIndex2 = predictionLabels[:, sequenceIndex+predictiveTokenOffset:config.sequenceLength]
+						predictionLabelsLayerIndex3 = pt.zeros([predictionLabels.shape[0], predictiveTokenOffset]).to(device)
+						predictionLabelsLayerIndex = pt.cat((predictionLabelsLayerIndex1, predictionLabelsLayerIndex2, predictionLabelsLayerIndex3), dim=1)	
+					else:
+						currentOutputLayerIndex = currentOutput[:, sequenceIndex]	#aka currentOutputSequentialIndex
+						predictionLabelsLayerIndex = predictionLabels[:, sequenceIndex+predictiveTokenOffset]	#aka predictionLabelsSequentialIndex
+					self.outputStateArray[layerIndex] = currentOutputLayerIndex
+					self.predictionLabelsArray[layerIndex] = predictionLabelsLayerIndex
 		else:
+			#first two tokens in window generate a hidden representation for the second token (pad output states of 1st token with zeros), and are used to predict third token
 			for sequenceIndex in range(config.sequenceLength):
 				sequentialInputState = inputState[:, sequenceIndex, :]
 				hiddenState = sequentialInputState
-				sequenceIndexMaxLayers = sequenceIndex
-				for layerIndex in range(sequenceIndexMaxLayers+1):
-					if(layerIndex == sequenceIndexMaxLayers):
-						self.hiddenStateLastList[layerIndex] = hiddenState
-						self.outputStateList[sequenceIndex] = hiddenState	#or self.outputStateList[layerIndex]
+				for layerIndex in range(config.sequenceLength):
+					if(generatePredictionsForEverySubsequence):
+						if(sequenceIndex < predictiveTokenOffset):
+							self.outputStateArray[sequenceIndex][layerIndex] = pt.zeros(hiddenState.shape).to(device)
+							self.predictionLabelsArray[sequenceIndex][layerIndex] = pt.zeros(hiddenState.shape[0]).to(device)	
+							self.outputStateArray[config.sequenceLength-sequenceIndex-1][layerIndex] = pt.zeros(hiddenState.shape).to(device)
+							self.predictionLabelsArray[config.sequenceLength-sequenceIndex-1][layerIndex] = pt.zeros(hiddenState.shape[0]).to(device)
+						if(layerIndex < predictiveTokenOffset):
+							self.outputStateArray[sequenceIndex][layerIndex] = pt.zeros(hiddenState.shape).to(device)
+							self.predictionLabelsArray[sequenceIndex][layerIndex] = pt.zeros(hiddenState.shape[0]).to(device)	
+							self.outputStateArray[sequenceIndex][config.sequenceLength-layerIndex-1] = pt.zeros(hiddenState.shape).to(device)
+							self.predictionLabelsArray[sequenceIndex][config.sequenceLength-layerIndex-1] = pt.zeros(hiddenState.shape[0]).to(device)
 					else:
-						previousInput = self.hiddenStateLastList[layerIndex]
-						currentInput = hiddenState
-						currentOutput = self.processLayer(sequentialInputState, layerIndex, currentInput, previousInput)
-						hiddenState = currentOutput
-						self.hiddenStateLastList[layerIndex] = currentInput
-			outputState = pt.stack(self.outputStateList, dim=1)
-			
-		if(calculateVocabPredictionHeadLoss):
-			#print("outputState.v = ", outputState.v)
-			predictionScores = self.predictionHead(outputState)
-			#print("predictionScores.v = ", predictionScores.v)
-			#used last layer hidden emeddings to predict next word
-			#print("predictionScores.shape = ", predictionScores.shape)
-			loss = self.lossFunction(predictionScores.view(-1, config.vocab_size), labels.view(-1))
-		else:
-			if(config.applyIOconversionLayers):
+						if(sequenceIndex < predictiveTokenOffset):
+							self.outputStateArray[sequenceIndex] = pt.zeros(hiddenState.shape).to(device)
+							self.predictionLabelsArray[sequenceIndex] = pt.zeros(hiddenState.shape[0]).to(device)
+							self.outputStateArray[config.sequenceLength-sequenceIndex-1] = pt.zeros(hiddenState.shape).to(device)
+							self.predictionLabelsArray[config.sequenceLength-sequenceIndex-1] = pt.zeros(hiddenState.shape[0]).to(device)
+																					
+			for sequenceIndex in range(config.sequenceLength-predictiveTokenOffset):
+				sequentialInputState = inputState[:, sequenceIndex, :]
+				hiddenState = sequentialInputState
+				sequenceIndexMaxLayers = sequenceIndex	#number of hidden layers used to encode the subsequence
+				for layerIndex in range(config.sequenceLength):	
+					if(layerIndex < sequenceIndexMaxLayers+1):
+						if(generatePredictionsForEverySubsequence):
+							if(layerIndex >= predictiveTokenOffset):
+								self.outputStateArray[sequenceIndex][layerIndex] = hiddenState
+								self.predictionLabelsArray[sequenceIndex][layerIndex] = predictionLabels[:, sequenceIndex+predictiveTokenOffset]
+						else:
+							if(layerIndex == sequenceIndexMaxLayers):
+								self.outputStateArray[sequenceIndex] = hiddenState
+								self.predictionLabelsArray[sequenceIndex] = predictionLabels[:, sequenceIndex+predictiveTokenOffset]
+								
+						if(layerIndex == sequenceIndexMaxLayers):
+							self.hiddenStateLastList[layerIndex] = hiddenState
+						else:
+							previousInput = self.hiddenStateLastList[layerIndex]
+							currentInput = hiddenState
+							currentOutput = self.processLayer(sequentialInputState, layerIndex, currentInput, previousInput)
+							hiddenState = currentOutput
+							self.hiddenStateLastList[layerIndex] = currentInput
+					else:
+						if(generatePredictionsForEverySubsequence):
+							self.outputStateArray[sequenceIndex][layerIndex] = pt.zeros(hiddenState.shape).to(device)
+							self.predictionLabelsArray[sequenceIndex][layerIndex] = pt.zeros([hiddenState.shape[0]]).to(device)	#predictionLabels[:, sequenceIndex+predictiveTokenOffset]
+					
+			if(generatePredictionsForEverySubsequence):
+				self.outputStateArray = np.reshape(self.outputStateArray, (self.outputStateArray.shape[0]*self.outputStateArray.shape[1]))
+				self.predictionLabelsArray = np.reshape(self.predictionLabelsArray, (self.predictionLabelsArray.shape[0]*self.predictionLabelsArray.shape[1]))
+		
+		outputState = pt.stack(list(self.outputStateArray), dim=1)
+		predictionLabels = pt.stack(list(self.predictionLabelsArray), dim=1)
+		predictionLabels = predictionLabels.type(pt.LongTensor).to(device)	#object should already be on gpu
+		if(generatePredictionsForEverySubsequence):
+			if(parallelProcessLayers):
+				outputState = pt.reshape(outputState, (outputState.shape[0], outputState.shape[1]*outputState.shape[2], outputState.shape[3]))	#pt.flatten(outputState, start_dim=1, end_dim=2)
+				predictionLabels = pt.reshape(predictionLabels, (predictionLabels.shape[0], predictionLabels.shape[1]*predictionLabels.shape[2]))	#pt.flatten(predictionLabels, start_dim=1, end_dim=2)
+					
+		if(applyIOconversionLayersOutput):
+			if(calculateVocabPredictionHeadLoss):
+				predictionScores = self.predictionHead(outputState)
+				#used last layer hidden emeddings to predict next word
+				loss = self.lossFunction(predictionScores.view(-1, config.vocab_size), predictionLabels.view(-1))
+			else:
 				outputState = pt.reshape(outputState, (config.batchSize*config.sequenceLength, config.hiddenLayerSize))
 				outputState = self.outputLayer(outputState)
-				#outputState = self.activationFunction(outputState)
+				#outputState = self.activationFunction(outputState)	#do not add activationFunction as outputs should be positive/negative (to match predictionEmbeddings)
 				outputState = pt.reshape(outputState, (config.batchSize, config.sequenceLength, config.embeddingLayerSize))
-				#print("outputState.shape = ", outputState.shape)
+		if(not calculateVocabPredictionHeadLoss):
+			predictionEmbeddings = self.word_embeddings(predictionLabels)
 			y = outputState
-			yHat = inputsEmbeddings
+			yHat = predictionEmbeddings
 			loss = self.lossFunction(y, yHat)
 			predictionScores = None
-				
+
 		return loss, predictionScores
 	
 	def processLayer(self, sequentialInputState, layerIndex, currentInput, previousInput):
