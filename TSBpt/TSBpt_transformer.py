@@ -123,13 +123,14 @@ def saveModel(model):
 	model.save_pretrained(modelFolderName)
 
 def propagate(device, model, tokenizer, batch):
-	input_ids = batch['input_ids'].to(device)
-	attention_mask = batch['attention_mask'].to(device)
+	inputIDs = batch['inputIDs'].to(device)
+	attentionMask = batch['attentionMask'].to(device)
 	labels = batch['labels'].to(device)
+	
+	outputs = model(inputIDs, attention_mask=attentionMask, labels=labels)
 
-	outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
-
-	accuracy = TSBpt_data.getAccuracy(tokenizer, input_ids, attention_mask, labels, outputs.logits)
+	predictionMask = torch.where(inputIDs==customMaskTokenID, 1.0, 0.0)	#maskTokenIndexFloat = maskTokenIndex.float()	
+	accuracy = TSBpt_data.getAccuracy(tokenizer, inputIDs, predictionMask, labels, outputs.logits)
 	loss = outputs.loss
 	
 	return loss, accuracy

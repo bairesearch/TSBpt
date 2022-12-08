@@ -63,14 +63,14 @@ def saveModel(model):
 	pt.save(model, modelPathName)
 
 def propagate(device, model, tokenizer, batch):
-	input_ids = batch['input_ids'].to(device)
-	attention_mask = batch['attention_mask'].to(device)
+	inputIDs = batch['inputIDs'].to(device)
+	attentionMask = batch['attentionMask'].to(device)
 	labels = batch['labels'].to(device)
 	
-	loss, outputs = model(labels, device)
+	loss, outputs, predictionMask = model(labels, attentionMask, device)
 	
 	if(calculateVocabPredictionHeadLoss):
-		accuracy = TSBpt_data.getAccuracy(tokenizer, input_ids, attention_mask, labels, outputs)
+		accuracy = TSBpt_data.getAccuracy(tokenizer, inputIDs, predictionMask, labels, outputs)
 	else:
 		accuracy = 0.0
 	
