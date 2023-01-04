@@ -1,19 +1,19 @@
-"""TSBpt_transformer.py
+"""SBNLPpt_transformer.py
 
 # Author:
-Richard Bruce Baxter - Copyright (c) 2022 Baxter AI (baxterai.com)
+Richard Bruce Baxter - Copyright (c) 2022-2023 Baxter AI (baxterai.com)
 
 # License:
 MIT License
 
 # Installation:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Usage:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Description:
-TSBpt transformer
+SBNLPpt transformer
 
 - recursiveLayers:numberOfHiddenLayers=6 supports approximately 2^6 tokens per sentence (contextual window = 512 tokens)
 
@@ -23,14 +23,14 @@ See RobertaForMaskedLM tutorial;
 	
 """
 
-from TSBpt_globalDefs import *
-import TSBpt_data
+from SBNLPpt_globalDefs import *
+import SBNLPpt_data
 
-from TSBpt_transformerModel import recursiveLayers
+from SBNLPpt_transformerModel import recursiveLayers
 
 if(recursiveLayers):
-	from TSBpt_transformerModel import sharedLayerWeights
-	from TSBpt_transformerModel import sharedLayerWeightsOutput
+	from SBNLPpt_transformerModel import sharedLayerWeights
+	from SBNLPpt_transformerModel import sharedLayerWeightsOutput
 	recursiveLayersNormaliseNumParameters = False	#default: True	#optional	#if use recursiveLayers normalise/equalise num of parameters with respect to !recursiveLayers
 	if(recursiveLayersNormaliseNumParameters):
 		recursiveLayersNormaliseNumParametersIntermediate = True	#normalise intermediateSize parameters also
@@ -93,7 +93,7 @@ if(not usePretainedModelDebug):
 import torch
 from transformers import RobertaConfig
 if(recursiveLayers):
-	from TSBpt_transformerModel import RobertaForMaskedLM
+	from SBNLPpt_transformerModel import RobertaForMaskedLM
 else:
 	from transformers import RobertaForMaskedLM
 	
@@ -130,7 +130,7 @@ def propagate(device, model, tokenizer, batch):
 	outputs = model(inputIDs, attention_mask=attentionMask, labels=labels)
 
 	predictionMask = torch.where(inputIDs==customMaskTokenID, 1.0, 0.0)	#maskTokenIndexFloat = maskTokenIndex.float()	
-	accuracy = TSBpt_data.getAccuracy(tokenizer, inputIDs, predictionMask, labels, outputs.logits)
+	accuracy = SBNLPpt_data.getAccuracy(tokenizer, inputIDs, predictionMask, labels, outputs.logits)
 	loss = outputs.loss
 	
 	return loss, accuracy

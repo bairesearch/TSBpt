@@ -1,19 +1,19 @@
-"""TSBpt_data.py
+"""SBNLPpt_data.py
 
 # Author:
-Richard Bruce Baxter - Copyright (c) 2022 Baxter AI (baxterai.com)
+Richard Bruce Baxter - Copyright (c) 2022-2023 Baxter AI (baxterai.com)
 
 # License:
 MIT License
 
 # Installation:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Usage:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Description:
-TSBpt data
+SBNLPpt data
 
 """
 
@@ -23,7 +23,7 @@ from tqdm.auto import tqdm
 from tokenizers import ByteLevelBPETokenizer
 from transformers import RobertaTokenizer
 import os
-from TSBpt_globalDefs import *
+from SBNLPpt_globalDefs import *
 
 if(not useLovelyTensors):
 	torch.set_printoptions(profile="full")

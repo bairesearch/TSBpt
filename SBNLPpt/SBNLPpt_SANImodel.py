@@ -1,19 +1,19 @@
-"""TSBpt_SANImodel.py
+"""SBNLPpt_SANImodel.py
 
 # Author:
-Richard Bruce Baxter - Copyright (c) 2022 Baxter AI (baxterai.com)
+Richard Bruce Baxter - Copyright (c) 2022-2023 Baxter AI (baxterai.com)
 
 # License:
 MIT License
 
 # Installation:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Usage:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Description:
-TSBpt SANI model recursiveLayers
+SBNLPpt SANI model recursiveLayers
 
 """
 
@@ -31,7 +31,9 @@ skipLayers = True
 if(skipLayers):
 	skipLayersDominance = 0.0	#0.9	#sequentialInputState preservation bias (direct recursive/loop connection) as signal is propagated to higher layers
 	skipLayersNorm = True
-retainHiddenEmbeddingStructure = False	#experimental	#do not mix hidden embeddings (for every unit/neuron in hidden layer, calculate new value based on current and previous value)
+
+processLayerRetainHiddenEmbeddingStructure = False	#experimental	#do not mix hidden embeddings (for every unit/neuron in hidden layer, calculate new value based on current and previous value)
+processLayerSubtractEmbeddings = False #experimental
 
 biologicalSimulationNoMultilayerBackprop = False
 if(biologicalSimulationNoMultilayerBackprop):
@@ -109,15 +111,18 @@ class SANIrecursiveLayersModel(nn.Module):
 		self.predictiveTokenOffset = 1	#no prediction is generated for first and last token in sentence (requires at least 2 tokens to generate a prediction)
 		
 	def generateSANIlayer(self, hiddenLayerSize):
-		#https://stackoverflow.com/questions/58374980/run-multiple-models-of-an-ensemble-in-parallel-with-pytorch/58389075#58389075
-		if(retainHiddenEmbeddingStructure):
-			self.numberOfHeads = hiddenLayerSize
-			self.numberOfInputChannels = 2
-			#input shape = B x (2 * numberOfHeads) x 1
-			#output shape = B x (1 x numberOfHeads) x 1
-			saniLayer = pt.nn.Conv1d(2*self.numberOfHeads, 1*self.numberOfHeads, kernel_size=1, groups=self.numberOfHeads)
+		if(processLayerSubtractEmbeddings):
+			self.numberOfInputChannels = 1
 		else:
-			saniLayer =	pt.nn.Linear(hiddenLayerSize*2, hiddenLayerSize)	#CHECKTHIS
+			self.numberOfInputChannels = 2
+		#https://stackoverflow.com/questions/58374980/run-multiple-models-of-an-ensemble-in-parallel-with-pytorch/58389075#58389075
+		if(processLayerRetainHiddenEmbeddingStructure):
+			self.numberOfHeads = hiddenLayerSize
+			#input shape = B x (numberOfInputChannels * numberOfHeads) x 1
+			#output shape = B x (1 x numberOfHeads) x 1
+			saniLayer = pt.nn.Conv1d(numberOfSequentialInputStates*self.numberOfHeads, 1*self.numberOfHeads, kernel_size=1, groups=self.numberOfHeads)
+		else:
+			saniLayer =	pt.nn.Linear(hiddenLayerSize*self.numberOfInputChannels, hiddenLayerSize)	#CHECKTHIS
 		return saniLayer
 				
 	def forward(self, labels, attentionMask, device):
@@ -318,14 +323,18 @@ class SANIrecursiveLayersModel(nn.Module):
 			saniLayer = self.saniLayer
 		else:
 			saniLayer = self.SANIlayers[layerIndex]
-		if(retainHiddenEmbeddingStructure):
-			combinedInput = pt.stack([previousInput, currentInput], dim=1)	#shape = [batchSize, numberOfHeads, numberOfInputChannels, ..]
-			combinedInput = pt.reshape(combinedInput, (batchSize, self.numberOfHeads*self.numberOfInputChannels, 1))
+		if(processLayerSubtractEmbeddings):
+			combinedInput = pt.abs(pt.subtract(previousInput, currentInput))
 			currentOutput = self.saniLayer(combinedInput)
-			currentOutput = pt.reshape(currentOutput, (batchSize, self.numberOfHeads))
 		else:
-			combinedInput = pt.concat((previousInput, currentInput), dim=1)	#CHECKTHIS
-			currentOutput = saniLayer(combinedInput)
+			if(processLayerRetainHiddenEmbeddingStructure):
+				combinedInput = pt.stack([previousInput, currentInput], dim=1)	#shape = [batchSize, numberOfHeads, numberOfInputChannels, ..]
+				combinedInput = pt.reshape(combinedInput, (batchSize, self.numberOfHeads*self.numberOfInputChannels, 1))
+				currentOutput = self.saniLayer(combinedInput)
+				currentOutput = pt.reshape(currentOutput, (batchSize, self.numberOfHeads))
+			else:
+				combinedInput = pt.concat((previousInput, currentInput), dim=1)	#CHECKTHIS
+				currentOutput = saniLayer(combinedInput)
 		currentOutput = self.activationFunction(currentOutput)
 		if(skipLayers):
 			currentOutput = pt.add(currentOutput*(1.0-skipLayersDominance), sequentialInputState)

@@ -1,28 +1,28 @@
-"""TSBpt_RNN.py
+"""SBNLPpt_RNN.py
 
 # Author:
-Richard Bruce Baxter - Copyright (c) 2022 Baxter AI (baxterai.com)
+Richard Bruce Baxter - Copyright (c) 2022-2023 Baxter AI (baxterai.com)
 
 # License:
 MIT License
 
 # Installation:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Usage:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Description:
-TSBpt RNN
+SBNLPpt RNN
 
 """
 
 import torch as pt
 
-from TSBpt_globalDefs import *
-import TSBpt_data
+from SBNLPpt_globalDefs import *
+import SBNLPpt_data
 
-from TSBpt_RNNmodel import recursiveLayers, RNNrecursiveLayersModel, RNNrecursiveLayersConfig, calculateVocabPredictionHeadLoss, applyIOconversionLayers
+from SBNLPpt_RNNmodel import recursiveLayers, RNNrecursiveLayersModel, RNNrecursiveLayersConfig, calculateVocabPredictionHeadLoss, applyIOconversionLayers
 
 hiddenLayerSize = 1024	#65536	#2^16 - large hidden size is required for recursive RNN as parameters are shared across a) sequence length and b) number of layers
 if(applyIOconversionLayers):
@@ -71,7 +71,7 @@ def propagate(device, model, tokenizer, batch):
 	
 	if(calculateVocabPredictionHeadLoss):
 		predictionMask = attentionMask	#CHECKTHIS #incomplete
-		accuracy = TSBpt_data.getAccuracy(tokenizer, inputIDs, predictionMask, labels, outputs)
+		accuracy = SBNLPpt_data.getAccuracy(tokenizer, inputIDs, predictionMask, labels, outputs)
 	else:
 		accuracy = 0.0
 	

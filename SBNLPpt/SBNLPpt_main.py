@@ -1,7 +1,7 @@
-"""TSBpt_main.py
+"""SBNLPpt_main.py
 
 # Author:
-Richard Bruce Baxter - Copyright (c) 2022 Baxter AI (baxterai.com)
+Richard Bruce Baxter - Copyright (c) 2022-2023 Baxter AI (baxterai.com)
 
 # License:
 MIT License
@@ -17,10 +17,10 @@ pip install lovely-tensors
 
 # Usage:
 source activate transformersenv
-python TSBpt_main.py
+python SBNLPpt_main.py
 
 # Description:
-TSBpt main - Transformer Syntactic Bias (TSB): various neural architectures with syntactic inductive biases (recursiveLayers)
+SBNLPpt main - Syntactic Bias natural language processing (SBNLP): various neural architectures with syntactic inductive biases (recursiveLayers, positionalEmbeddingTransformation)
 
 """
 
@@ -32,19 +32,19 @@ from pathlib import Path
 from transformers import AdamW
 import math 
 
-from TSBpt_globalDefs import *
-import TSBpt_data
+from SBNLPpt_globalDefs import *
+import SBNLPpt_data
 if(useAlgorithmTransformer):
-	from TSBpt_transformer import createModel, loadModel, saveModel, propagate
+	from SBNLPpt_transformer import createModel, loadModel, saveModel, propagate
 elif(useAlgorithmRNN):
-	from TSBpt_RNN import createModel, loadModel, saveModel, propagate
+	from SBNLPpt_RNN import createModel, loadModel, saveModel, propagate
 elif(useAlgorithmSANI):
-	from TSBpt_SANI import createModel, loadModel, saveModel, propagate
+	from SBNLPpt_SANI import createModel, loadModel, saveModel, propagate
 
 def main():
 	if(statePreprocessDataset):
-		dataset = TSBpt_data.downloadDataset()
-		TSBpt_data.preprocessDataset(dataset)
+		dataset = SBNLPpt_data.downloadDataset()
+		SBNLPpt_data.preprocessDataset(dataset)
 	paths = [str(x) for x in Path(dataFolder).glob('**/*.txt')]
 	
 	if(usePretainedModelDebug):
@@ -52,9 +52,9 @@ def main():
 		testDataset(tokenizer, paths)
 	else:
 		if(stateTrainTokenizer):
-			TSBpt_data.trainTokenizer(paths)
+			SBNLPpt_data.trainTokenizer(paths)
 		if(stateTrainDataset or stateTestDataset):
-			tokenizer = TSBpt_data.loadTokenizer()
+			tokenizer = SBNLPpt_data.loadTokenizer()
 		if(stateTrainDataset):
 			trainDataset(tokenizer, paths)
 		if(stateTestDataset):
@@ -90,7 +90,7 @@ def trainDataset(tokenizer, paths):
 		useMLM = True
 	else:
 		useMLM = False
-	loader = TSBpt_data.createDataLoader(useMLM, tokenizer, paths, pathIndexMin, pathIndexMax)
+	loader = SBNLPpt_data.createDataLoader(useMLM, tokenizer, paths, pathIndexMin, pathIndexMax)
 	
 	for epoch in range(trainStartEpoch, trainStartEpoch+trainNumberOfEpochs):
 		loop = tqdm(loader, leave=True)
@@ -129,7 +129,7 @@ def testDataset(tokenizer, paths):
 
 	pathIndexMin = int(numberOfDataFiles*trainSplitFraction)
 	pathIndexMax = pathIndexMin+testNumberOfDataFiles
-	loader = TSBpt_data.createDataLoader(tokenizer, paths, pathIndexMin, pathIndexMax)
+	loader = SBNLPpt_data.createDataLoader(tokenizer, paths, pathIndexMin, pathIndexMax)
 		
 	for epoch in range(trainStartEpoch, trainStartEpoch+trainNumberOfEpochs):
 		loop = tqdm(loader, leave=True)

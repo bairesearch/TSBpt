@@ -1,19 +1,19 @@
-"""TSBpt_RNNmodel.py
+"""SBNLPpt_RNNmodel.py
 
 # Author:
-Richard Bruce Baxter - Copyright (c) 2022 Baxter AI (baxterai.com)
+Richard Bruce Baxter - Copyright (c) 2022-2023 Baxter AI (baxterai.com)
 
 # License:
 MIT License
 
 # Installation:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Usage:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Description:
-TSBpt RNN model recursiveLayers
+SBNLPpt RNN model recursiveLayers
 
 """
 

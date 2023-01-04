@@ -1,19 +1,19 @@
-"""TSBpt_SANI.py
+"""SBNLPpt_SANI.py
 
 # Author:
-Richard Bruce Baxter - Copyright (c) 2022 Baxter AI (baxterai.com)
+Richard Bruce Baxter - Copyright (c) 2022-2023 Baxter AI (baxterai.com)
 
 # License:
 MIT License
 
 # Installation:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Usage:
-see TSBpt_main.py
+see SBNLPpt_main.py
 
 # Description:
-TSBpt SANI
+SBNLPpt SANI
 
 Similar to WaveNet 
 
@@ -21,10 +21,10 @@ Similar to WaveNet
 
 import torch as pt
 
-from TSBpt_globalDefs import *
-import TSBpt_data
+from SBNLPpt_globalDefs import *
+import SBNLPpt_data
 
-from TSBpt_SANImodel import recursiveLayers, SANIrecursiveLayersModel, SANIrecursiveLayersConfig, calculateVocabPredictionHeadLoss, applyIOconversionLayers
+from SBNLPpt_SANImodel import recursiveLayers, SANIrecursiveLayersModel, SANIrecursiveLayersConfig, calculateVocabPredictionHeadLoss, applyIOconversionLayers
 
 hiddenLayerSize = 1024	#1024	#8192	#1024	#depends on GPU memory	#2^16 = 65536 - large hidden size is required for recursive SANI as parameters are shared across a) sequence length and b) number of layers
 if(applyIOconversionLayers):
@@ -70,7 +70,7 @@ def propagate(device, model, tokenizer, batch):
 	loss, outputs, predictionMask = model(labels, attentionMask, device)
 	
 	if(calculateVocabPredictionHeadLoss):
-		accuracy = TSBpt_data.getAccuracy(tokenizer, inputIDs, predictionMask, labels, outputs)
+		accuracy = SBNLPpt_data.getAccuracy(tokenizer, inputIDs, predictionMask, labels, outputs)
 	else:
 		accuracy = 0.0
 	

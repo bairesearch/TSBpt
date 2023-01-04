@@ -1,19 +1,19 @@
-"""TSBpt_globalDefs.py
+"""SBNLPpt_globalDefs.py
 
 # Author:
-Richard Bruce Baxter - Copyright (c) 2022 Baxter AI (baxterai.com)
+Richard Bruce Baxter - Copyright (c) 2022-2023 Baxter AI (baxterai.com)
 
 # License:
 MIT License
 
 # Installation:
-see TSBpt_globalDefs.py
+see SBNLPpt_globalDefs.py
 
 # Usage:
-see TSBpt_globalDefs.py
+see SBNLPpt_globalDefs.py
 
 # Description:
-TSBpt globalDefs
+SBNLPpt globalDefs
 
 """
 
@@ -28,7 +28,7 @@ useAlgorithmRNN = False
 useAlgorithmSANI = True
 
 relativeFolderLocations = False
-userName = 'user'	#default: user
+userName = 'rich'	#default: user
 
 useSmallDatasetDebug = False
 useSingleHiddenLayerDebug = False
@@ -78,7 +78,7 @@ if(relativeFolderLocations):
 else:
 	downloadCacheFolder = '/media/' + userName + '/datasets/cache'
 	dataFolder = '/media/' + userName + '/datasets/data'
-	modelFolderName = '/media/' + userName + '/large/source/ANNpython/TSBpt/model'
+	modelFolderName = '/media/' + userName + '/large/source/ANNpython/SBNLPpt/model'
 
 modelSaveNumberOfBatches = 1000	#resave model after x training batches
 
